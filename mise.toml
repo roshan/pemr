@@ -51,12 +51,11 @@ depends = ["css"]
 run = "docker build --platform linux/amd64 -t personal-emr:latest -f deploy/Dockerfile ."
 
 [tasks.deploy]
-description = "Build, push to kant registry, and (re)deploy the quadlet. Reads PEMR_DB_PASSWORD from env."
+description = "Build, push to kant registry, and (re)deploy the quadlet. The DB password lives in ~/.config/personal-emr/env on kant; deploys do not touch it."
 depends = ["build"]
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
-: "${PEMR_DB_PASSWORD:?set PEMR_DB_PASSWORD before deploying}"
 
 REGISTRY=kant.internal.roshangeorge.dev:5000
 IMAGE=$REGISTRY/personal-emr:latest
@@ -68,11 +67,11 @@ docker push "$IMAGE"
 echo "==> ensure files dir + ssh dirs on kant"
 ssh kant "mkdir -p ~/personal-emr/files ~/.config/containers/systemd ~/.config/systemd/user ~/.local/bin"
 
-echo "==> rendering quadlet from template (password substituted at deploy time)"
-TMP=$(mktemp)
-trap 'rm -f "$TMP"' EXIT
-sed "s|__DB_PASSWORD__|$PEMR_DB_PASSWORD|" deploy/personal-emr.container.tmpl > "$TMP"
-scp "$TMP" kant:~/.config/containers/systemd/personal-emr.container
+echo "==> verify secret env file is present (one-time bootstrap; not managed by deploy)"
+ssh kant 'test -s ~/.config/personal-emr/env || { echo "missing ~/.config/personal-emr/env on kant — see CLAUDE.md (Deployment shape)"; exit 1; }'
+
+echo "==> copy quadlet"
+scp deploy/personal-emr.container kant:~/.config/containers/systemd/personal-emr.container
 
 echo "==> copy backup units + script"
 scp ops/personal-emr-backup.service kant:~/.config/systemd/user/personal-emr-backup.service
