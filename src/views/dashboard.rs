@@ -183,12 +183,12 @@ fn incidents_timeline(
                         li {
                             a href={ "/incidents/" (inc.id) }
                               title=(inc.title)
-                              class="group flex flex-col items-center" {
-                                span class="block w-3 h-3 rounded-full bg-brand group-hover:bg-indigo-800 ring-2 ring-surface transition-colors" {}
-                                time class="text-xs text-muted mt-2 whitespace-nowrap group-hover:text-ink" {
+                              class="group block text-center" {
+                                span class="block mx-auto w-3 h-3 rounded-full bg-brand group-hover:bg-indigo-800 ring-2 ring-surface transition-colors" {}
+                                time class="block text-xs text-muted mt-2 whitespace-nowrap group-hover:text-ink" {
                                     (render_date(inc.occurred_at, &inc.occurred_precision))
                                 }
-                                span class="text-xs text-ink mt-0.5 max-w-32 truncate group-hover:text-brand" {
+                                span class="block text-xs text-ink mt-0.5 max-w-32 truncate group-hover:text-brand" {
                                     (inc.title)
                                 }
                             }

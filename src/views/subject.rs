@@ -65,16 +65,25 @@ pub fn dashboard_page(nav: &Nav<'_>, subject: &Subject, data: &DashboardData<'_>
 }
 
 fn bio_header(subject: &Subject) -> Markup {
+    let bio_parts: Vec<Markup> = [
+        subject.dob.map(|d| html! { span { "DOB " (d) } }),
+        subject.sex_at_birth.as_ref().map(|s| html! { span { (s) } }),
+        subject.blood_type.as_ref().map(|b| html! { span { "Blood " (b) } }),
+        subject.cf_access_email.as_ref().map(|e| html! { span { (c::code(e)) } }),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     html! {
         section class="mb-5 flex flex-wrap items-baseline justify-between gap-3" {
             div {
                 h1 class="text-2xl font-semibold tracking-tight text-ink" { (subject.full_name) }
-                div class="text-xs text-muted mt-0.5 flex flex-wrap gap-x-3 gap-y-1" {
-                    @if let Some(d) = subject.dob { span { "DOB " (d) } }
-                    @if let Some(s) = &subject.sex_at_birth { span { (s) } }
-                    @if let Some(b) = &subject.blood_type { span { "Blood " (b) } }
-                    @if let Some(e) = &subject.cf_access_email {
-                        span { (c::code(e)) }
+                @if !bio_parts.is_empty() {
+                    div class="text-xs text-muted mt-1" {
+                        @for (i, p) in bio_parts.iter().enumerate() {
+                            @if i > 0 { span class="mx-2 text-muted/60" { "·" } }
+                            (p)
+                        }
                     }
                 }
                 @if !subject.notes.is_empty() {
