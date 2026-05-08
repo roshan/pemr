@@ -1,0 +1,105 @@
+[tools]
+rust = "1.94.1"
+
+[env]
+DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5433/postgres"
+FILES_DIR = "/tmp/personal-emr-files"
+BIND_ADDR = "127.0.0.1:8080"
+DEV_VIEWER_EMAIL = "roshan@technologybrother.com"
+
+[tasks.pg-up]
+description = "Start a throwaway Postgres for local dev"
+run = """
+docker rm -f pemr-pg 2>/dev/null || true
+docker run --rm -d --name pemr-pg -p 5433:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+echo "Postgres up at 127.0.0.1:5433"
+"""
+
+[tasks.pg-down]
+description = "Stop the local dev Postgres"
+run = "docker rm -f pemr-pg 2>/dev/null || true"
+
+[tasks.css]
+description = "Compile Tailwind classes from src/ into static/vendor/app.css"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+if [ ! -x bin/tailwindcss ]; then
+  mkdir -p bin
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+  arch=$(uname -m)
+  case "$arch" in arm64|aarch64) arch=arm64 ;; x86_64|amd64) arch=x64 ;; esac
+  echo "downloading tailwindcss for $os-$arch"
+  curl -fsSL "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-${os}-${arch}" -o bin/tailwindcss
+  chmod +x bin/tailwindcss
+fi
+bin/tailwindcss -i tailwind.css -o static/vendor/app.css --minify
+"""
+
+[tasks.css-watch]
+description = "Watch src/ and recompile Tailwind on change (for live iteration)"
+run = "bin/tailwindcss -i tailwind.css -o static/vendor/app.css --watch"
+
+[tasks.run]
+description = "Run the app locally (auto-recompiles CSS first)"
+depends = ["css"]
+run = "mkdir -p $FILES_DIR && cargo run"
+
+[tasks.build]
+description = "Build the amd64 container image (CSS recompiled first)"
+depends = ["css"]
+run = "docker build --platform linux/amd64 -t personal-emr:latest -f deploy/Dockerfile ."
+
+[tasks.deploy]
+description = "Build, push to kant registry, and (re)deploy the quadlet. Reads PEMR_DB_PASSWORD from env."
+depends = ["build"]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+: "${PEMR_DB_PASSWORD:?set PEMR_DB_PASSWORD before deploying}"
+
+REGISTRY=kant.internal.roshangeorge.dev:5000
+IMAGE=$REGISTRY/personal-emr:latest
+
+echo "==> tag + push"
+docker tag personal-emr:latest "$IMAGE"
+docker push "$IMAGE"
+
+echo "==> ensure files dir + ssh dirs on kant"
+ssh kant "mkdir -p ~/personal-emr/files ~/.config/containers/systemd ~/.config/systemd/user ~/.local/bin"
+
+echo "==> rendering quadlet from template (password substituted at deploy time)"
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
+sed "s|__DB_PASSWORD__|$PEMR_DB_PASSWORD|" deploy/personal-emr.container.tmpl > "$TMP"
+scp "$TMP" kant:~/.config/containers/systemd/personal-emr.container
+
+echo "==> copy backup units + script"
+scp ops/personal-emr-backup.service kant:~/.config/systemd/user/personal-emr-backup.service
+scp ops/personal-emr-backup.timer kant:~/.config/systemd/user/personal-emr-backup.timer
+scp deploy/backup.sh kant:~/.local/bin/personal-emr-backup.sh
+ssh kant "chmod +x ~/.local/bin/personal-emr-backup.sh"
+
+echo "==> reload + restart"
+ssh kant "systemctl --user daemon-reload"
+ssh kant "systemctl --user restart personal-emr.service"
+ssh kant "systemctl --user enable --now personal-emr-backup.timer"
+
+echo "==> status"
+ssh kant "systemctl --user --no-pager status personal-emr.service | head -20"
+
+echo
+echo "Logs:   ssh kant 'journalctl --user -u personal-emr.service -f'"
+echo "Health: ssh kant 'curl -fsS localhost:8100/healthz'"
+"""
+
+[tasks.provision-db]
+description = "One-time: create personal_emr role + database in postgres-main on kant. Reads PEMR_DB_PASSWORD from env."
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+: "${PEMR_DB_PASSWORD:?set PEMR_DB_PASSWORD before running}"
+ssh kant "podman exec postgres-main psql -U postgres -tAc \\"select 1 from pg_roles where rolname='personal_emr'\\" | grep -q 1 || podman exec postgres-main psql -U postgres -c \\"create role personal_emr login password '$PEMR_DB_PASSWORD'\\""
+ssh kant "podman exec postgres-main psql -U postgres -tAc \\"select 1 from pg_database where datname='personal_emr'\\" | grep -q 1 || podman exec postgres-main psql -U postgres -c 'create database personal_emr owner personal_emr'"
+echo "Role + database ready."
+"""

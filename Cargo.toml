@@ -1,0 +1,55 @@
+[package]
+name = "personal-emr"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+
+[[bin]]
+name = "personal-emr"
+path = "src/main.rs"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[dependencies]
+axum = { version = "0.8", features = ["multipart", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace", "compression-zstd", "limit"] }
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "time",
+    "json",
+    "migrate",
+    "macros",
+] }
+maud = { version = "0.27", features = ["axum"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v7", "serde"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
+sha2 = "0.10"
+hex = "0.4"
+bytes = "1"
+mime_guess = "2"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
+
+# DICOM import (Sutter / Lexmark PACSGEAR exports). Pure Rust, no FFI.
+# The `jpeg` feature on dicom-pixeldata pulls in pure-Rust JPEG (baseline +
+# lossless) decoders so transfer syntaxes 1.2.840.10008.1.2.4.50 / .57 / .70
+# can be rendered. JPEG-2000 (.90/.91) is **not** enabled — those would
+# require a C dep; if a study fails to render the original DICOM is still
+# stored and downloadable.
+dicom-object = "0.8"
+dicom-dictionary-std = "0.8"
+dicom-pixeldata = { version = "0.8", default-features = false, features = ["image", "jpeg", "rayon"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }

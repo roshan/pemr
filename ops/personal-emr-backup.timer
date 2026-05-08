@@ -1,0 +1,10 @@
+[Unit]
+Description=personal-emr nightly backup timer
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

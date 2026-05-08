@@ -1,0 +1,24 @@
+[Unit]
+Description=Personal EMR
+After=network-online.target postgres.service
+Wants=network-online.target
+Requires=postgres.service
+
+[Container]
+Image=localhost:5000/personal-emr:latest
+ContainerName=personal-emr
+PodmanArgs=--pull=always
+PublishPort=127.0.0.1:8100:8080
+Volume=/home/ubuntu/personal-emr/files:/data/files:Z,U
+Environment=BIND_ADDR=0.0.0.0:8080
+Environment=FILES_DIR=/data/files
+Environment=DATABASE_URL=postgresql://personal_emr:__DB_PASSWORD__@host.containers.internal:5432/personal_emr
+Environment=RUST_LOG=info,personal_emr=debug
+AutoUpdate=registry
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

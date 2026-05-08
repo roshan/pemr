@@ -1,0 +1,224 @@
+use axum::extract::{Form, Path, State};
+use axum::response::{IntoResponse, Redirect, Response};
+use maud::Markup;
+use serde::Deserialize;
+use uuid::Uuid;
+
+use crate::error::{AppError, AppResult};
+use crate::handlers::{AppState, load_subjects};
+use crate::models::{Incident, Record, Subject, empty_to_none, parse_date};
+use crate::viewer::ViewerContext;
+use crate::views::layout::Nav;
+use crate::views::subject;
+
+pub async fn list(
+    State(state): State<AppState>,
+    viewer: ViewerContext,
+) -> AppResult<Markup> {
+    let subjects = load_subjects(&state.pool).await?;
+    let counts = sqlx::query_as::<_, (Uuid, i64, i64)>(
+        "select s.id,
+                (select count(*) from incidents i where i.subject_id = s.id),
+                (select count(*) from records r where r.subject_id = s.id)
+           from subjects s",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    let nav = Nav {
+        title: "Subjects",
+        current_path: "/subjects",
+        subjects: &subjects,
+        current_subject: viewer.default_subject_id,
+        viewer: &viewer,
+    };
+    Ok(subject::list_page(&nav, &subjects, &counts))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateForm {
+    pub given_name: String,
+    pub family_name: String,
+    #[serde(default)]
+    pub dob: String,
+    #[serde(default)]
+    pub sex_at_birth: String,
+    #[serde(default)]
+    pub blood_type: String,
+    #[serde(default)]
+    pub cf_access_email: String,
+    #[serde(default)]
+    pub notes: String,
+}
+
+pub async fn create(
+    State(state): State<AppState>,
+    Form(form): Form<CreateForm>,
+) -> AppResult<Response> {
+    let given_name = form.given_name.trim().to_string();
+    let family_name = form.family_name.trim().to_string();
+    if given_name.is_empty() || family_name.is_empty() {
+        return Err(AppError::BadRequest(
+            "given_name and family_name required".into(),
+        ));
+    }
+    let dob = parse_date(&form.dob).map_err(AppError::BadRequest)?;
+    let id = Uuid::now_v7();
+    let full_name = format!("{given_name} {family_name}");
+    sqlx::query(
+        "insert into subjects (id, full_name, given_name, family_name, dob,
+                               sex_at_birth, blood_type, notes, cf_access_email)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+    )
+    .bind(id)
+    .bind(&full_name)
+    .bind(&given_name)
+    .bind(&family_name)
+    .bind(dob)
+    .bind(empty_to_none(form.sex_at_birth))
+    .bind(empty_to_none(form.blood_type))
+    .bind(form.notes)
+    .bind(empty_to_none(form.cf_access_email))
+    .execute(&state.pool)
+    .await?;
+    Ok(Redirect::to("/subjects").into_response())
+}
+
+/// `/subjects/{id}` — per-subject dashboard. Bio header on top, then
+/// timeline + recent incidents + recent records, all scoped to this subject.
+pub async fn detail(
+    State(state): State<AppState>,
+    viewer: ViewerContext,
+    Path(id): Path<Uuid>,
+) -> AppResult<Markup> {
+    let subjects = load_subjects(&state.pool).await?;
+    let s = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?;
+
+    let timeline_limit = crate::views::dashboard::dashboard_timeline_limit() as i64;
+    let timeline_incidents = sqlx::query_as::<_, Incident>(
+        "select id, subject_id, title, narrative, occurred_at, occurred_precision,
+                created_at, updated_at
+           from incidents
+          where subject_id = $1
+          order by occurred_at desc nulls last, created_at desc
+          limit $2",
+    )
+    .bind(id)
+    .bind(timeline_limit)
+    .fetch_all(&state.pool)
+    .await?;
+    let timeline_total: i64 =
+        sqlx::query_scalar("select count(*) from incidents where subject_id = $1")
+            .bind(id)
+            .fetch_one(&state.pool)
+            .await?;
+
+    let recent_incidents = sqlx::query_as::<_, Incident>(
+        "select id, subject_id, title, narrative, occurred_at, occurred_precision,
+                created_at, updated_at
+           from incidents
+          where subject_id = $1
+          order by created_at desc
+          limit 10",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let recent_records = sqlx::query_as::<_, Record>(
+        "select id, subject_id, kind, title, notes, occurred_at, occurred_precision,
+                file_path, content_type, byte_size, sha256,
+                preview_path, preview_content_type,
+                thumbnail_path, thumbnail_content_type, study_instance_uid,
+                dicom_metadata, instance_number,
+                source_id, external_id, external_url, source_synced_at,
+                created_at, updated_at
+           from records
+          where subject_id = $1
+          order by created_at desc
+          limit 10",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let nav = Nav {
+        title: &s.full_name,
+        current_path: "/",
+        subjects: &subjects,
+        current_subject: Some(id),
+        viewer: &viewer,
+    };
+    let data = crate::views::dashboard::DashboardData {
+        subjects: &subjects,
+        timeline_incidents: &timeline_incidents,
+        timeline_total,
+        recent_incidents: &recent_incidents,
+        recent_records: &recent_records,
+    };
+    Ok(subject::dashboard_page(&nav, &s, &data))
+}
+
+pub async fn edit_form(
+    State(state): State<AppState>,
+    viewer: ViewerContext,
+    Path(id): Path<Uuid>,
+) -> AppResult<Markup> {
+    let subjects = load_subjects(&state.pool).await?;
+    let s = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?;
+    let nav = Nav {
+        title: "Edit subject",
+        current_path: "/subjects",
+        subjects: &subjects,
+        current_subject: Some(id),
+        viewer: &viewer,
+    };
+    Ok(subject::edit_form(&nav, &s, None))
+}
+
+pub async fn edit(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Form(form): Form<CreateForm>,
+) -> AppResult<Response> {
+    let given_name = form.given_name.trim().to_string();
+    let family_name = form.family_name.trim().to_string();
+    if given_name.is_empty() || family_name.is_empty() {
+        return Err(AppError::BadRequest(
+            "given_name and family_name required".into(),
+        ));
+    }
+    let dob = parse_date(&form.dob).map_err(AppError::BadRequest)?;
+    let full_name = format!("{given_name} {family_name}");
+    sqlx::query(
+        "update subjects set
+            given_name = $2,
+            family_name = $3,
+            full_name = $4,
+            dob = $5,
+            sex_at_birth = $6,
+            blood_type = $7,
+            cf_access_email = $8,
+            notes = $9,
+            updated_at = now()
+          where id = $1",
+    )
+    .bind(id)
+    .bind(&given_name)
+    .bind(&family_name)
+    .bind(&full_name)
+    .bind(dob)
+    .bind(empty_to_none(form.sex_at_birth))
+    .bind(empty_to_none(form.blood_type))
+    .bind(empty_to_none(form.cf_access_email))
+    .bind(form.notes)
+    .execute(&state.pool)
+    .await?;
+    Ok(Redirect::to(&format!("/subjects/{id}")).into_response())
+}

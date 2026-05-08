@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/* Tailwind v4 scans these files for class names and emits only what's used. */
+@source "./src/**/*.rs";
+
+/* Project palette — tweak here to adjust the look across all components. */
+@theme {
+    --color-canvas: var(--color-slate-50);
+    --color-surface: white;
+    --color-ink: var(--color-slate-900);
+    --color-muted: var(--color-slate-500);
+    --color-line: var(--color-slate-200);
+
+    --color-brand: var(--color-indigo-600);
+    --color-brand-soft: var(--color-indigo-100);
+    --color-brand-ink: var(--color-indigo-900);
+
+    --color-subject-bg: var(--color-sky-100);
+    --color-subject-fg: var(--color-sky-900);
+    --color-kind-bg: var(--color-emerald-100);
+    --color-kind-fg: var(--color-emerald-900);
+    --color-source-bg: var(--color-amber-100);
+    --color-source-fg: var(--color-amber-900);
+
+    --color-danger: var(--color-rose-600);
+}
+
+/* A small base layer so unstyled HTML (in narratives, error pages) reads sensibly. */
+@layer base {
+    html { background: var(--color-canvas); color: var(--color-ink); }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    a { color: var(--color-brand); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+}
+
+/* Custom utilities. Tailwind v4's source scanner doesn't pick up arbitrary
+ * `text-[0.7rem]`-style classes out of Rust string literals reliably, so for
+ * anything that genuinely needs an arbitrary value we name it here and use a
+ * normal class in the source. */
+@utility card-grid {
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+}
+@utility tile-grid {
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+}
+@utility dicom-meta-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    row-gap: 0.25rem;
+}
+@media (min-width: 640px) {
+    .dicom-meta-grid { grid-template-columns: 12rem 1fr; }
+}
+@utility viewer-frame {
+    width: 100%;
+    height: 75vh;
+    border: 0;
+    display: block;
+}
+@utility viewer-img {
+    display: block;
+    max-width: 100%;
+    max-height: 75vh;
+    margin-left: auto;
+    margin-right: auto;
+}
+@utility timeline-line-top {
+    /* sits at vertical centre of a w-3 h-3 dot inside p-3 padding */
+    top: 1.4rem;
+}
+@utility timeline-marker-offset {
+    /* offsets a dot to sit on the left rule of the vertical timeline */
+    left: -1.85rem;
+}
