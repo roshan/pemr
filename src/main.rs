@@ -1,3 +1,4 @@
+mod api_auth;
 mod config;
 mod db;
 mod dicom_import;
@@ -53,7 +54,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         dev_viewer_email: cfg.dev_viewer_email.clone(),
     };
 
-    let app = Router::new()
+    // The UI router. CF Access gates entry in production; the viewer
+    // middleware reads `Cf-Access-Authenticated-User-Email` and sets a UI
+    // default subject. It never gates access.
+    let ui = Router::<handlers::AppState>::new()
         .route("/", get(handlers::dashboard::index))
         .route("/timeline", get(handlers::dashboard::timeline_page))
         .route("/healthz", get(handlers::dashboard::healthz))
@@ -103,12 +107,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // sources
         .route("/sources", get(handlers::sources::list).post(handlers::sources::create))
         .route("/sources/{id}", get(handlers::sources::detail))
-        .nest_service("/static", ServeDir::new("static"))
-        .with_state(state)
+        // settings: API keys
+        .route(
+            "/settings/api-keys",
+            get(handlers::settings::api_keys).post(handlers::settings::create_api_key),
+        )
+        .route(
+            "/settings/api-keys/{id}/revoke",
+            post(handlers::settings::revoke_api_key),
+        )
         .layer(axum::middleware::from_fn_with_state(
             viewer_cfg,
             viewer::middleware,
-        ))
+        ));
+
+    // The API router. Gated by Bearer tokens from the `api_keys` table —
+    // see `api_auth::middleware`. Errors are JSON, not HTML.
+    let api = Router::<handlers::AppState>::new()
+        .route("/api/v1", get(handlers::api::root::index))
+        .route("/api/v1/me", get(handlers::api::me::me))
+        .route("/api/v1/subjects", get(handlers::api::subjects::list))
+        .route("/api/v1/subjects/{id}", get(handlers::api::subjects::detail))
+        .route("/api/v1/incidents", get(handlers::api::incidents::list))
+        .route("/api/v1/incidents/{id}", get(handlers::api::incidents::detail))
+        .route("/api/v1/records", get(handlers::api::records::list))
+        .route("/api/v1/records/{id}", get(handlers::api::records::detail))
+        .route("/api/v1/records/{id}/file", get(handlers::api::records::file))
+        .route("/api/v1/records/{id}/preview", get(handlers::api::records::preview))
+        .route("/api/v1/records/{id}/thumbnail", get(handlers::api::records::thumbnail))
+        .route("/api/v1/sources", get(handlers::api::sources::list))
+        .route("/api/v1/sources/{id}", get(handlers::api::sources::detail))
+        .route("/api/v1/search", get(handlers::api::search::search))
+        .layer(axum::middleware::from_fn_with_state(
+            pool.clone(),
+            api_auth::middleware,
+        ));
+
+    let app = Router::new()
+        .merge(ui)
+        .merge(api)
+        .nest_service("/static", ServeDir::new("static"))
+        .with_state(state)
         .layer(DefaultBodyLimit::max(1024 * 1024 * 1024))
         .layer(RequestBodyLimitLayer::new(1024 * 1024 * 1024))
         .layer(CompressionLayer::new())

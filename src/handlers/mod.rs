@@ -5,10 +5,12 @@ use sqlx::PgPool;
 
 use crate::models::Subject;
 
+pub mod api;
 pub mod dashboard;
 pub mod incidents;
 pub mod records;
 pub mod search;
+pub mod settings;
 pub mod sources;
 pub mod subjects;
 

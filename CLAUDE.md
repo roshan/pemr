@@ -40,8 +40,8 @@ The runtime contract on kant (ports, volumes, secrets convention, Tunnel routing
 | sqlx | Postgres client | runtime queries (no `query!` macros) |
 | maud | HTML templates | compile-time, no runtime template compilation |
 | serde / serde_json | (de)serialization, jsonb column | core ecosystem |
-| uuid | v7 IDs | features = ["v7","serde"] |
-| time | timestamps | features = ["serde","formatting","parsing","macros"] |
+| uuid | v7 IDs (+ v4 for API token randomness) | features = ["v4","v7","serde"] — v4 is used only by `api_auth::generate_token` to source 32 bytes from the OS CSPRNG |
+| time | timestamps | features = ["serde","serde-human-readable","formatting","parsing","macros"] — `serde-human-readable` makes `OffsetDateTime`/`Date` serialize as RFC3339/ISO 8601 strings in JSON (the `/api/v1` surface) while keeping the compact tuple format for binary serializers |
 | sha2 / hex | content-addressed file storage | RustCrypto |
 | bytes | streaming buffers | core ecosystem |
 | mime_guess | Content-Type from extension | small, well-known |
@@ -130,9 +130,18 @@ Either path produces the same record set; the user can switch when one is being 
 ## Multi-subject + auth rules
 
 - **Subject is data, not auth.** Every list view, search, and form respects `subject_id` as a filter and a default; no view should be subject-blind unless the user explicitly asks for "all".
-- **Authorization is delegated to Cloudflare Access**, not implemented in the app. The policy is currently "any authenticated viewer sees every subject"; we write zero permission-check code.
+- **The UI is gated by Cloudflare Access**, not by in-app code. The policy is currently "any authenticated viewer sees every subject"; we write zero permission-check code for browser traffic.
 - **The viewer middleware** reads `Cf-Access-Authenticated-User-Email` (or `DEV_VIEWER_EMAIL` in local dev), matches it against `subjects.cf_access_email`, and sets a UI default. It never gates access. If that policy ever changes, add a `visibility` column or an ACL table — do not retrofit `subject_id` semantics.
 - The app binds `0.0.0.0:8080` inside the container, but the host publishes only `127.0.0.1:8100` — Cloudflare Tunnel is the sole ingress. If that ever changes (LAN exposure, etc.), upgrade the viewer middleware to verify the Cloudflare Access JWT before merging.
+- **The `/api/v1/*` surface is a second auth path**: an app-issued bearer token from the `api_keys` table, gated by `api_auth::middleware`. The agent still has to clear Cloudflare Access at the edge (typically via a CF Access service token configured on the `emr.roshangeorge.dev` app), then we additionally verify the bearer token. Tokens are sha256-hashed before storage; the raw token is shown once at creation in `/settings/api-keys`. Keys are unscoped — same "every key sees every subject" policy as the UI. The `owner_subject_id` column is for accounting/revocation, NOT a data filter. Do not collapse the two auth paths into one (e.g. by trusting only the bearer token at the app and dropping the CF Access gate) without an explicit design conversation.
+
+## API surface (`/api/v1/*`)
+
+- **Read-only.** GET endpoints only. Adding writes is a deliberate scope change — talk first.
+- **JSON in, JSON out.** Errors are `{"error": "..."}` with the right HTTP status, served by `handlers::api::ApiError`. Never return HTML from an `/api/v1/*` route.
+- **Mirror the UI's read shape.** Endpoints exist for subjects, incidents, records (incl. file/preview/thumbnail bytes), sources, full-text search, plus `/api/v1` (discovery) and `/api/v1/me`. File routes stream the original bytes inline with the real Content-Type.
+- **Same query params as the UI.** Lists accept `?subject=<uuid>`; records also accept `?kind=<kind>`. Lists also accept `?limit=` (default 100, capped 500) and `?offset=`.
+- All API handlers extract `ApiKeyContext` so per-key accounting (last_used_at, etc.) is automatic.
 
 ## HTMX rules
 

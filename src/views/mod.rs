@@ -4,5 +4,6 @@ pub mod incident;
 pub mod layout;
 pub mod record;
 pub mod search;
+pub mod settings;
 pub mod source;
 pub mod subject;

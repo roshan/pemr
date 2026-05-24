@@ -69,6 +69,23 @@ pub struct Record {
     pub updated_at: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct ApiKey {
+    pub id: Uuid,
+    pub name: String,
+    // Populated by sqlx::FromRow but never read directly — the hash is
+    // looked up by `api_auth::middleware` with its own scalar query, and
+    // we never want to leak it through serialization.
+    #[allow(dead_code)]
+    #[serde(skip_serializing)]
+    pub token_hash: String,
+    pub token_prefix: String,
+    pub owner_subject_id: Option<Uuid>,
+    pub last_used_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+    pub revoked_at: Option<OffsetDateTime>,
+}
+
 pub const RECORD_KINDS: &[&str] = &[
     "xray", "mri", "ct", "ultrasound", "report", "lab", "note", "prescription", "photo", "document", "other",
 ];
