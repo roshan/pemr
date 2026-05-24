@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::api_auth;
 use crate::error::{AppError, AppResult};
 use crate::handlers::{AppState, load_subjects};
-use crate::models::{ApiKey, empty_to_none};
+use crate::models::ApiKey;
 use crate::viewer::ViewerContext;
 use crate::views::layout::Nav;
 use crate::views::settings;
@@ -35,8 +35,6 @@ pub async fn api_keys(
 #[derive(Debug, Deserialize)]
 pub struct CreateForm {
     pub name: String,
-    #[serde(default)]
-    pub owner_subject_id: String,
 }
 
 pub async fn create_api_key(
@@ -48,12 +46,11 @@ pub async fn create_api_key(
     if name.is_empty() {
         return Err(AppError::BadRequest("name required".into()));
     }
-    let owner_subject_id = match empty_to_none(form.owner_subject_id) {
-        None => None,
-        Some(s) => Some(
-            Uuid::parse_str(&s).map_err(|e| AppError::BadRequest(e.to_string()))?,
-        ),
-    };
+    // Owner is whoever's logged in. If the viewer doesn't map to a known
+    // subject (dev with no DEV_VIEWER_EMAIL match, prod with no
+    // cf_access_email match) it's left null — that's the same fallback
+    // the dropdown's "— none —" used to produce.
+    let owner_subject_id = viewer.default_subject_id;
 
     let token = api_auth::generate_token();
     let id = Uuid::now_v7();

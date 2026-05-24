@@ -69,20 +69,14 @@ pub fn api_keys_page(
                         "Where this key will be used (e.g. \"laptop assistant agent\").",
                         c::input_text("name", "", true, Some(120)),
                     ))
-                    (c::field_with_hint(
-                        "Owner (optional)",
-                        "Whose key this is, for revocation tracking. Does not restrict data access.",
-                        c::select_field("owner_subject_id", false, || html! {
-                            (c::select_option("", "— none —", false))
-                            @for s in subjects {
-                                (c::select_option(
-                                    s.id.to_string(),
-                                    format!("{} {}", s.given_name, s.family_name),
-                                    false,
-                                ))
+                    @if let Some(owner_id) = nav.viewer.default_subject_id {
+                        @if let Some(name) = subject_name(subjects, owner_id) {
+                            p class="text-xs text-muted" {
+                                "Owned by " span class="font-medium text-ink" { (name) }
+                                " (whoever's logged in)."
                             }
-                        }),
-                    ))
+                        }
+                    }
                     (c::button_primary("Generate key"))
                 }))
             }, keys.is_empty()))
