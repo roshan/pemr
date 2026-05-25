@@ -10,6 +10,8 @@ Deployed to **kant** as a Quadlet at `127.0.0.1:8100`, fronted by Cloudflare Tun
 
 The runtime contract on kant (ports, volumes, secrets convention, Tunnel routing) is documented at `kant:~/docs/README.md`. **Any change here that alters that contract must be paired with an edit there**, via the scp/git workflow that file describes.
 
+Durable project knowledge — overview, API reference, anything an agent would want to read *without* cloning the repo — lives in the **`PEMR` Taskmaster KB container** (`KB:PEMR:overview`, `KB:PEMR:api`, …). **Any big change to architecture, auth, deploy shape, schema rules, or the API surface must update the matching KB doc in the same PR** (use the `taskmaster-kb` skill or `taskmaster_kb.py upsert --container PEMR --path <slug>`). Add a new doc when a new concern emerges (e.g. a sync workflow gets its own `KB:PEMR:sync`). Small fixes/refactors do not need a KB update — judgment call, but err toward updating when in doubt.
+
 ## Stack — and why
 
 | Choice | Reason |
