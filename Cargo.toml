@@ -17,7 +17,7 @@ strip = "symbols"
 axum = { version = "0.8", features = ["multipart", "macros"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "trace", "compression-zstd", "limit"] }
+tower-http = { version = "0.6", features = ["fs", "trace", "compression-zstd", "limit", "normalize-path"] }
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio-rustls",
     "postgres",

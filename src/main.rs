@@ -13,10 +13,13 @@ mod views;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::ServiceExt;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post};
+use tower::Layer;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::normalize_path::NormalizePathLayer;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
@@ -153,8 +156,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http());
 
+    // Trim a single trailing slash before routing so directory-style paths work:
+    // `/api/v1/` == `/api/v1`, `/api/v1/subjects/` == `/api/v1/subjects`, etc.
+    // (PEMR-8). This MUST wrap the whole app — a Router-level `.layer()` runs
+    // after route matching, too late to affect which route is chosen. `/` is
+    // preserved (trim_trailing_slash never reduces the root to empty).
+    let app = NormalizePathLayer::trim_trailing_slash().layer(app);
+
     let listener = tokio::net::TcpListener::bind(&cfg.bind_addr).await?;
     tracing::info!("listening on http://{}", cfg.bind_addr);
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        ServiceExt::<axum::extract::Request>::into_make_service(app),
+    )
+    .await?;
     Ok(())
 }

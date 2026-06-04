@@ -38,7 +38,7 @@ Durable project knowledge — overview, API reference, anything an agent would w
 |---|---|---|
 | axum | HTTP server | tokio-rs, mature |
 | tokio | async runtime | core ecosystem |
-| tower / tower-http | middleware (fs, trace, compression, limit) | core ecosystem |
+| tower / tower-http | middleware (fs, trace, compression, limit, normalize-path) | `normalize-path` trims trailing slashes app-wide (see `main.rs`); core ecosystem |
 | sqlx | Postgres client | runtime queries (no `query!` macros) |
 | maud | HTML templates | compile-time, no runtime template compilation |
 | serde / serde_json | (de)serialization, jsonb column | core ecosystem |
