@@ -138,8 +138,91 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/records/{id}/file", get(handlers::api::records::file))
         .route("/api/v1/records/{id}/preview", get(handlers::api::records::preview))
         .route("/api/v1/records/{id}/thumbnail", get(handlers::api::records::thumbnail))
-        .route("/api/v1/sources", get(handlers::api::sources::list))
+        .route(
+            "/api/v1/sources",
+            get(handlers::api::sources::list).post(handlers::api::sources::create),
+        )
         .route("/api/v1/sources/{id}", get(handlers::api::sources::detail))
+        // Clinical read/write surface. POST = idempotent upsert (see api::mod);
+        // GET list accepts ?subject=&limit=&offset=. Reference data (providers)
+        // is not subject-scoped. Join tables have no detail-by-id route.
+        .route(
+            "/api/v1/providers",
+            get(handlers::api::providers::list).post(handlers::api::providers::create),
+        )
+        .route("/api/v1/providers/{id}", get(handlers::api::providers::detail))
+        .route(
+            "/api/v1/appointments",
+            get(handlers::api::appointments::list).post(handlers::api::appointments::create),
+        )
+        .route(
+            "/api/v1/appointments/{id}",
+            get(handlers::api::appointments::detail),
+        )
+        .route(
+            "/api/v1/allergies",
+            get(handlers::api::allergies::list).post(handlers::api::allergies::create),
+        )
+        .route("/api/v1/allergies/{id}", get(handlers::api::allergies::detail))
+        .route(
+            "/api/v1/medications",
+            get(handlers::api::medications::list).post(handlers::api::medications::create),
+        )
+        .route(
+            "/api/v1/medications/{id}",
+            get(handlers::api::medications::detail),
+        )
+        .route(
+            "/api/v1/conditions",
+            get(handlers::api::conditions::list).post(handlers::api::conditions::create),
+        )
+        .route(
+            "/api/v1/conditions/{id}",
+            get(handlers::api::conditions::detail),
+        )
+        .route(
+            "/api/v1/immunizations",
+            get(handlers::api::immunizations::list).post(handlers::api::immunizations::create),
+        )
+        .route(
+            "/api/v1/immunizations/{id}",
+            get(handlers::api::immunizations::detail),
+        )
+        .route(
+            "/api/v1/observations",
+            get(handlers::api::observations::list).post(handlers::api::observations::create),
+        )
+        .route(
+            "/api/v1/observations/{id}",
+            get(handlers::api::observations::detail),
+        )
+        .route(
+            "/api/v1/care-reminders",
+            get(handlers::api::care_reminders::list).post(handlers::api::care_reminders::create),
+        )
+        .route(
+            "/api/v1/care-reminders/{id}",
+            get(handlers::api::care_reminders::detail),
+        )
+        .route(
+            "/api/v1/subject-identifiers",
+            get(handlers::api::subject_identifiers::list)
+                .post(handlers::api::subject_identifiers::create),
+        )
+        .route(
+            "/api/v1/subject-identifiers/{id}",
+            get(handlers::api::subject_identifiers::detail),
+        )
+        .route(
+            "/api/v1/subject-providers",
+            get(handlers::api::subject_providers::list)
+                .post(handlers::api::subject_providers::create),
+        )
+        .route(
+            "/api/v1/subject-relationships",
+            get(handlers::api::subject_relationships::list)
+                .post(handlers::api::subject_relationships::create),
+        )
         .route("/api/v1/search", get(handlers::api::search::search))
         .layer(axum::middleware::from_fn_with_state(
             pool.clone(),
