@@ -43,7 +43,7 @@ Durable project knowledge — overview, API reference, anything an agent would w
 | maud | HTML templates | compile-time, no runtime template compilation |
 | serde / serde_json | (de)serialization, jsonb column | core ecosystem |
 | uuid | v7 IDs (+ v4 for API token randomness) | features = ["v4","v7","serde"] — v4 is used only by `api_auth::generate_token` to source 32 bytes from the OS CSPRNG |
-| time | timestamps | features = ["serde","serde-human-readable","formatting","parsing","macros"] — `serde-human-readable` makes `OffsetDateTime`/`Date` serialize as RFC3339/ISO 8601 strings in JSON (the `/api/v1` surface) while keeping the compact tuple format for binary serializers |
+| time | timestamps | features = ["serde","serde-human-readable","serde-well-known","formatting","parsing","macros"]. `Date` serializes as ISO 8601 (`1988-01-28`) out of the box. `OffsetDateTime` does NOT: `serde-human-readable` alone emits time's native format (`2026-05-08 16:34:17 +00:00:00`), which is not RFC3339 and rejects RFC3339 input. So every `OffsetDateTime`/`Option<OffsetDateTime>` field on the `/api/v1` surface (models + request bodies) is tagged `#[serde(with = "time::serde::rfc3339")]` / `…::rfc3339::option` (needs `serde-well-known`) → the API reads and writes RFC3339. New timestamp fields MUST carry that attribute. |
 | sha2 / hex | content-addressed file storage | RustCrypto |
 | bytes | streaming buffers | core ecosystem |
 | mime_guess | Content-Type from extension | small, well-known |

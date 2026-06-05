@@ -107,6 +107,7 @@ pub struct Create {
     #[serde(default)]
     pub effective_precision: Option<String>,
     #[serde(default)]
+    #[serde(with = "time::serde::rfc3339::option")]
     pub effective_at: Option<OffsetDateTime>,
     #[serde(default)]
     pub panel_id: Option<Uuid>,
@@ -125,6 +126,7 @@ pub struct Create {
     #[serde(default)]
     pub external_url: Option<String>,
     #[serde(default)]
+    #[serde(with = "time::serde::rfc3339::option")]
     pub source_synced_at: Option<OffsetDateTime>,
     #[serde(default)]
     pub source_payload: Option<Value>,

@@ -16,7 +16,9 @@ pub struct Subject {
     pub cf_access_email: Option<String>,
     // 0008: positive "no known allergies" assertion (distinct from "no data").
     pub no_known_allergies: bool,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
 
@@ -30,7 +32,9 @@ pub struct Source {
     // 0007: a clinic IS a source, so sources carry facility contact info.
     pub phone: Option<String>,
     pub address: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
 
@@ -42,7 +46,9 @@ pub struct Incident {
     pub narrative: String,
     pub occurred_at: Option<Date>,
     pub occurred_precision: String,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
 
@@ -69,8 +75,11 @@ pub struct Record {
     pub source_id: Option<Uuid>,
     pub external_id: Option<String>,
     pub external_url: Option<String>,
+    #[serde(with = "time::serde::rfc3339::option")]
     pub source_synced_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
 
@@ -86,8 +95,11 @@ pub struct ApiKey {
     pub token_hash: String,
     pub token_prefix: String,
     pub owner_subject_id: Option<Uuid>,
+    #[serde(with = "time::serde::rfc3339::option")]
     pub last_used_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
     pub revoked_at: Option<OffsetDateTime>,
 }
 
@@ -211,8 +223,11 @@ mod clinical_model {
         pub source_id: Option<Uuid>,
         pub external_id: Option<String>,
         pub external_url: Option<String>,
+        #[serde(with = "time::serde::rfc3339::option")]
         pub source_synced_at: Option<OffsetDateTime>,
+        #[serde(with = "time::serde::rfc3339")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -225,6 +240,7 @@ mod clinical_model {
         pub active: bool,
         pub since: Option<Date>,
         pub notes: String,
+        #[serde(with = "time::serde::rfc3339")]
         pub created_at: OffsetDateTime,
     }
 
@@ -237,8 +253,11 @@ mod clinical_model {
         pub id_type: String,
         pub value: String,
         pub notes: String,
+        #[serde(with = "time::serde::rfc3339::option")]
         pub source_synced_at: Option<OffsetDateTime>,
+        #[serde(with = "time::serde::rfc3339")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -250,7 +269,9 @@ mod clinical_model {
         pub provider_id: Option<Uuid>,
         pub source_id: Option<Uuid>,
         pub incident_id: Option<Uuid>,
+        #[serde(with = "time::serde::rfc3339")]
         pub starts_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339::option")]
         pub ends_at: Option<OffsetDateTime>,
         pub all_day: bool,
         pub status: String,
@@ -259,8 +280,11 @@ mod clinical_model {
         pub notes: String,
         pub external_id: Option<String>,
         pub external_url: Option<String>,
+        #[serde(with = "time::serde::rfc3339::option")]
         pub source_synced_at: Option<OffsetDateTime>,
+        #[serde(with = "time::serde::rfc3339")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -282,8 +306,11 @@ mod clinical_model {
         pub source_id: Option<Uuid>,
         pub external_id: Option<String>,
         pub external_url: Option<String>,
+        #[serde(with = "time::serde::rfc3339::option")]
         pub source_synced_at: Option<OffsetDateTime>,
+        #[serde(with = "time::serde::rfc3339")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -307,8 +334,11 @@ mod clinical_model {
         pub source_id: Option<Uuid>,
         pub external_id: Option<String>,
         pub external_url: Option<String>,
+        #[serde(with = "time::serde::rfc3339::option")]
         pub source_synced_at: Option<OffsetDateTime>,
+        #[serde(with = "time::serde::rfc3339")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -329,8 +359,11 @@ mod clinical_model {
         pub source_id: Option<Uuid>,
         pub external_id: Option<String>,
         pub external_url: Option<String>,
+        #[serde(with = "time::serde::rfc3339::option")]
         pub source_synced_at: Option<OffsetDateTime>,
+        #[serde(with = "time::serde::rfc3339")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -355,8 +388,11 @@ mod clinical_model {
         pub source_id: Option<Uuid>,
         pub external_id: Option<String>,
         pub external_url: Option<String>,
+        #[serde(with = "time::serde::rfc3339::option")]
         pub source_synced_at: Option<OffsetDateTime>,
+        #[serde(with = "time::serde::rfc3339")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -378,6 +414,7 @@ mod clinical_model {
         pub abnormal_flag: Option<String>,
         pub effective_on: Date,
         pub effective_precision: String,
+        #[serde(with = "time::serde::rfc3339::option")]
         pub effective_at: Option<OffsetDateTime>,
         pub panel_id: Option<Uuid>,
         pub record_id: Option<Uuid>,
@@ -387,8 +424,11 @@ mod clinical_model {
         pub source_id: Option<Uuid>,
         pub external_id: Option<String>,
         pub external_url: Option<String>,
+        #[serde(with = "time::serde::rfc3339::option")]
         pub source_synced_at: Option<OffsetDateTime>,
+        #[serde(with = "time::serde::rfc3339")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -404,7 +444,9 @@ mod clinical_model {
         pub recommended_by: Option<Uuid>,
         pub satisfied_by_appointment_id: Option<Uuid>,
         pub notes: String,
+        #[serde(with = "time::serde::rfc3339")]
         pub created_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339")]
         pub updated_at: OffsetDateTime,
     }
 
@@ -415,6 +457,7 @@ mod clinical_model {
         pub related_subject_id: Uuid,
         pub relationship: String,
         pub notes: String,
+        #[serde(with = "time::serde::rfc3339")]
         pub created_at: OffsetDateTime,
     }
 

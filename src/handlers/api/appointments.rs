@@ -58,6 +58,7 @@ pub async fn detail(
 pub struct Create {
     pub subject_id: Uuid,
     pub title: String,
+    #[serde(with = "time::serde::rfc3339")]
     pub starts_at: OffsetDateTime,
     #[serde(default)]
     pub provider_id: Option<Uuid>,
@@ -66,6 +67,7 @@ pub struct Create {
     #[serde(default)]
     pub incident_id: Option<Uuid>,
     #[serde(default)]
+    #[serde(with = "time::serde::rfc3339::option")]
     pub ends_at: Option<OffsetDateTime>,
     #[serde(default)]
     pub all_day: Option<bool>,
@@ -80,6 +82,7 @@ pub struct Create {
     #[serde(default)]
     pub external_url: Option<String>,
     #[serde(default)]
+    #[serde(with = "time::serde::rfc3339::option")]
     pub source_synced_at: Option<OffsetDateTime>,
     #[serde(default)]
     pub source_payload: Option<Value>,
