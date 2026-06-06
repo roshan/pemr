@@ -110,7 +110,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/subjects/{id}/incidents", get(handlers::incidents::list_for_subject))
         .route("/subjects/{id}/timeline", get(handlers::dashboard::timeline_for_subject))
         .route("/subjects/{id}/growth", get(handlers::subjects::growth))
-        .route("/subjects/{id}/immunizations", get(handlers::subjects::immunizations))
+        .route(
+            "/subjects/{id}/immunizations",
+            get(handlers::subjects::immunizations).post(handlers::clinical::add_immunization),
+        )
+        // clinical entry (PEMR-3 UI)
+        .route("/subjects/{id}/clinical", get(handlers::clinical::page))
+        .route("/subjects/{id}/allergies", post(handlers::clinical::add_allergy))
+        .route("/subjects/{id}/medications", post(handlers::clinical::add_medication))
+        .route("/subjects/{id}/conditions", post(handlers::clinical::add_condition))
+        .route("/subjects/{id}/observations", post(handlers::clinical::add_observation))
         .route("/subjects/{id}/summary", get(handlers::subjects::summary))
         .route(
             "/subjects/{id}/appointments",

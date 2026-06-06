@@ -237,6 +237,7 @@ fn bio_header(subject: &Subject) -> Markup {
                 }
             }
             div class="flex flex-wrap gap-2" {
+                (c::button_link_primary(format!("/subjects/{}/clinical", subject.id), "+ Add data"))
                 (c::button_link_secondary(format!("/subjects/{}/summary", subject.id), "Summary (print)"))
                 (c::button_link_secondary(format!("/subjects/{}/appointments", subject.id), "Appointments"))
                 (c::button_link_secondary(format!("/subjects/{}/immunizations", subject.id), "Immunizations"))

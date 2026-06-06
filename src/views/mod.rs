@@ -1,5 +1,6 @@
 pub mod appointment;
 pub mod care_team;
+pub mod clinical_entry;
 pub mod components;
 pub mod dashboard;
 pub mod growth;
