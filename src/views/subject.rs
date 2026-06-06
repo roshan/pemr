@@ -135,7 +135,10 @@ fn clinical_summary(cs: &ClinicalSummary) -> Markup {
                         @for a in &cs.allergies {
                             (c::panel_list_item(
                                 html! { (a.substance) },
-                                html! { @if let Some(sev) = &a.severity { (sev) } },
+                                html! {
+                                    @if let Some(crit) = &a.criticality { (crit) }
+                                    @else if let Some(sev) = &a.severity { (sev) }
+                                },
                             ))
                         }
                     })

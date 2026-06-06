@@ -301,6 +301,7 @@ use roxmltree::Node;
 // (resolved via `resolve_display`). The original parser keyed on displayName and
 // so extracted almost nothing from a real Sutter export.
 const T_ALLERGY_OBS: &str = "2.16.840.1.113883.10.20.22.4.7"; // Allergy-Intolerance Observation
+const T_SEVERITY_OBS: &str = "2.16.840.1.113883.10.20.22.4.8"; // Reaction Severity Observation
 const T_PROBLEM_OBS: &str = "2.16.840.1.113883.10.20.22.4.4"; // Problem Observation
 const T_MED_ACT: &str = "2.16.840.1.113883.10.20.22.4.16"; // Medication Activity
 const T_IMMUNIZATION: &str = "2.16.840.1.113883.10.20.22.4.52"; // Immunization Activity
@@ -313,6 +314,9 @@ enum CItem {
         code: Option<String>,
         code_system: Option<String>,
         reaction: Option<String>,
+        reaction_code: Option<String>,
+        reaction_code_system: Option<String>,
+        criticality: Option<String>,
         severity: Option<String>,
     },
     Medication { name: String, code: Option<String>, code_system: Option<String> },
@@ -437,15 +441,45 @@ fn resolve_display(node: Node<'_, '_>, idmap: &HashMap<String, String>) -> Optio
         .map(str::to_string)
 }
 
-/// Resolve a node's own `<text><reference value="#id"/>` into the narrative.
-fn text_ref(node: Node<'_, '_>, idmap: &HashMap<String, String>) -> Option<String> {
-    let r = child(node, "text")
-        .and_then(|t| child(t, "reference"))
-        .and_then(|r| r.attribute("value"))?;
-    idmap
-        .get(r.trim_start_matches('#'))
-        .filter(|v| !v.is_empty())
-        .cloned()
+/// Allergy criticality (FHIR: potential seriousness on re-exposure) from the
+/// Criticality observation (LOINC 82606-5). Maps HL7 CRITH/CRITL/CRITU →
+/// high | low | unable-to-assess. Distinct from a reaction's `severity`.
+fn criticality_of(obs: Node<'_, '_>) -> Option<String> {
+    let value = descendants_named(obs, "observation")
+        .find(|o| child(*o, "code").and_then(|c| c.attribute("code")) == Some("82606-5"))
+        .and_then(|o| child(o, "value"))?;
+    let code = value.attribute("code").unwrap_or("");
+    let disp = value.attribute("displayName").unwrap_or("").to_lowercase();
+    Some(
+        match code {
+            "CRITH" => "high",
+            "CRITL" => "low",
+            _ if disp.contains("high") => "high",
+            _ if disp.contains("low") => "low",
+            _ => "unable-to-assess",
+        }
+        .to_string(),
+    )
+}
+
+/// Reaction severity (FHIR: how bad a reaction WAS) from the Reaction Severity
+/// Observation (template …22.4.8) → mild | moderate | severe. Often absent.
+fn severity_of(obs: Node<'_, '_>) -> Option<String> {
+    let disp = descendants_named(obs, "observation")
+        .find(|o| has_template(*o, T_SEVERITY_OBS))
+        .and_then(|o| child(o, "value"))
+        .and_then(|v| v.attribute("displayName"))?
+        .to_lowercase();
+    Some(if disp.contains("severe") {
+        "severe"
+    } else if disp.contains("moderate") {
+        "moderate"
+    } else if disp.contains("mild") {
+        "mild"
+    } else {
+        return Some(disp);
+    }
+    .to_string())
 }
 
 /// Normalize an HL7 `codeSystemName` to our short `code_system` labels.
@@ -560,29 +594,28 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
                         None => continue,
                     };
                     let code_node = pe.and_then(|pe| child(pe, "code"));
-                    let reaction = obs
-                        .descendants()
-                        .find(|n| {
-                            n.tag_name().name() == "entryRelationship"
-                                && n.attribute("typeCode") == Some("MFST")
-                        })
-                        .and_then(|er| descendants_named(er, "observation").next())
-                        .and_then(|o| {
-                            // The narrative reaction ("Asthma") beats the coarse
-                            // SNOMED value displayName ("Other").
-                            text_ref(o, &idmap)
-                                .or_else(|| child(o, "value").and_then(|v| resolve_display(v, &idmap)))
-                        });
-                    let severity = obs
-                        .descendants()
-                        .find(|n| {
-                            n.tag_name().name() == "observation"
-                                && child(*n, "code").and_then(|c| c.attribute("code"))
-                                    == Some("82606-5")
-                        })
-                        .and_then(|o| child(o, "value"))
-                        .and_then(|v| v.attribute("displayName"))
-                        .map(|s| s.replace(" criticality", "").trim().to_string());
+                    // Reaction manifestation(s) — FHIR reaction.manifestation: a
+                    // coded concept (SNOMED CT) plus display text. An allergy may
+                    // list several; join the text, keep the first code.
+                    let mut manifestations: Vec<String> = Vec::new();
+                    let mut reaction_code = None;
+                    let mut reaction_code_system = None;
+                    for er in obs.children().filter(|n| {
+                        n.tag_name().name() == "entryRelationship"
+                            && n.attribute("typeCode") == Some("MFST")
+                    }) {
+                        if let Some(val) =
+                            descendants_named(er, "observation").next().and_then(|o| child(o, "value"))
+                        {
+                            if let Some(d) = resolve_display(val, &idmap) {
+                                manifestations.push(d);
+                            }
+                            if reaction_code.is_none() {
+                                reaction_code = val.attribute("code").map(str::to_string);
+                                reaction_code_system = norm_system(val.attribute("codeSystemName"));
+                            }
+                        }
+                    }
                     let ext_id = entry_id(obs).unwrap_or_else(|| hid("allergy", &substance));
                     out.push((
                         ext_id,
@@ -591,8 +624,11 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
                             code: code_node.and_then(|c| c.attribute("code")).map(str::to_string),
                             code_system: code_node
                                 .and_then(|c| norm_system(c.attribute("codeSystemName"))),
-                            reaction,
-                            severity,
+                            reaction: (!manifestations.is_empty()).then(|| manifestations.join(", ")),
+                            reaction_code,
+                            reaction_code_system,
+                            criticality: criticality_of(obs),
+                            severity: severity_of(obs),
                         },
                     ));
                 }
@@ -800,15 +836,18 @@ async fn upsert_item(
     item: CItem,
 ) -> Result<(), sqlx::Error> {
     match item {
-        CItem::Allergy { substance, code, code_system, reaction, severity } => {
+        CItem::Allergy { substance, code, code_system, reaction, reaction_code, reaction_code_system, criticality, severity } => {
             sqlx::query(&format!(
-                "insert into allergies (id, subject_id, substance, code, code_system, reaction, severity, source_id, external_id)
-                 values ($1,$2,$3,$4,$5,$6,$7,$8,$9){ON_CONFLICT}
+                "insert into allergies (id, subject_id, substance, code, code_system, reaction, reaction_code, reaction_code_system, criticality, severity, source_id, external_id)
+                 values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12){ON_CONFLICT}
                     substance=excluded.substance, code=excluded.code, code_system=excluded.code_system,
-                    reaction=excluded.reaction, severity=excluded.severity, updated_at=now()"
+                    reaction=excluded.reaction, reaction_code=excluded.reaction_code,
+                    reaction_code_system=excluded.reaction_code_system, criticality=excluded.criticality,
+                    severity=excluded.severity, updated_at=now()"
             ))
             .bind(Uuid::now_v7()).bind(subject_id).bind(&substance).bind(&code).bind(&code_system)
-            .bind(&reaction).bind(&severity).bind(source_id).bind(ext_id).execute(&mut *conn).await?;
+            .bind(&reaction).bind(&reaction_code).bind(&reaction_code_system).bind(&criticality).bind(&severity)
+            .bind(source_id).bind(ext_id).execute(&mut *conn).await?;
         }
         CItem::Medication { name, code, code_system } => {
             sqlx::query(&format!(
@@ -929,9 +968,10 @@ pub fn preview_ccda_docs(xmls: &[String]) -> Preview {
     for item in items.values() {
         tally(&mut p.counts, item);
         let sample = match item {
-            CItem::Allergy { substance, severity, reaction, .. } => format!(
-                "allergy    {substance}{}{}",
-                severity.as_deref().map(|s| format!(" [{s}]")).unwrap_or_default(),
+            CItem::Allergy { substance, criticality, severity, reaction, .. } => format!(
+                "allergy    {substance}{}{}{}",
+                criticality.as_deref().map(|c| format!(" [crit:{c}]")).unwrap_or_default(),
+                severity.as_deref().map(|s| format!(" [sev:{s}]")).unwrap_or_default(),
                 reaction.as_deref().map(|r| format!(" → {r}")).unwrap_or_default(),
             ),
             CItem::Medication { name, .. } => format!("med        {name}"),
