@@ -64,6 +64,8 @@ pub async fn index(_ctx: ApiKeyContext) -> Json<Value> {
             {"method": "GET",  "path": "/api/v1/subject-relationships",   "summary": "list family graph edges (?subject=)"},
             {"method": "POST", "path": "/api/v1/subject-relationships",   "summary": "upsert a relationship (req: subject_id, related_subject_id, relationship)"},
             {"method": "GET",  "path": "/api/v1/search?q=...&subject=...", "summary": "full-text search across incidents + records"},
+            {"method": "POST", "path": "/api/v1/import/fhir?subject=<uuid>&source=<name>", "summary": "import a FHIR R4 Bundle (Apple Health clinical records / Epic FHIR export); idempotent on resource id"},
+            {"method": "POST", "path": "/api/v1/import/ccda?subject=<uuid>&source=<name>", "summary": "import a C-CDA XML document (MyChart 'Download My Record'); body is the raw XML"},
         ],
         "provenance": "On any POST that accepts source provenance, supply source_id + \
             external_id (e.g. a stable hash of the source document + item) to get \

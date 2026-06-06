@@ -7,6 +7,7 @@ mod files;
 mod growth_ref;
 mod handlers;
 mod images;
+mod importer;
 mod models;
 mod peds;
 mod viewer;
@@ -279,6 +280,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .post(handlers::api::subject_relationships::create),
         )
         .route("/api/v1/search", get(handlers::api::search::search))
+        .route("/api/v1/import/fhir", post(handlers::api::import::fhir))
+        .route("/api/v1/import/ccda", post(handlers::api::import::ccda))
         .layer(axum::middleware::from_fn_with_state(
             pool.clone(),
             api_auth::middleware,

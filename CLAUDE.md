@@ -55,6 +55,7 @@ Durable project knowledge — overview, API reference, anything an agent would w
 | dicom-dictionary-std | DICOM tag constants | pure Rust |
 | dicom-pixeldata | DICOM pixel data decoder | features = ["image","jpeg","rayon"]; pure Rust JPEG baseline + lossless |
 | image | PNG encoder | features = ["png"] only; everything else off |
+| roxmltree | read-only XML DOM for the C-CDA importer | pure Rust, no FFI/build.rs; used by `importer.rs` to parse MyChart C-CDA exports |
 
 ### Vendored frontend assets
 

@@ -53,3 +53,4 @@ dicom-dictionary-std = "0.8"
 dicom-pixeldata = { version = "0.8", default-features = false, features = ["image", "jpeg", "rayon"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+roxmltree = "0.20"

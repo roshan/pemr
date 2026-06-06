@@ -21,6 +21,7 @@ pub mod appointments;
 pub mod care_reminders;
 pub mod conditions;
 pub mod immunizations;
+pub mod import;
 pub mod incidents;
 pub mod me;
 pub mod medications;
