@@ -36,6 +36,10 @@ pub struct CreateForm {
     #[serde(default)]
     pub base_url: String,
     #[serde(default)]
+    pub phone: String,
+    #[serde(default)]
+    pub address: String,
+    #[serde(default)]
     pub notes: String,
 }
 
@@ -52,14 +56,19 @@ pub async fn create(
         return Err(AppError::BadRequest(format!("unknown kind: {kind}")));
     }
     let id = Uuid::now_v7();
-    sqlx::query("insert into sources (id, name, kind, base_url, notes) values ($1,$2,$3,$4,$5)")
-        .bind(id)
-        .bind(&name)
-        .bind(&kind)
-        .bind(empty_to_none(form.base_url))
-        .bind(form.notes)
-        .execute(&state.pool)
-        .await?;
+    sqlx::query(
+        "insert into sources (id, name, kind, base_url, phone, address, notes)
+         values ($1,$2,$3,$4,$5,$6,$7)",
+    )
+    .bind(id)
+    .bind(&name)
+    .bind(&kind)
+    .bind(empty_to_none(form.base_url))
+    .bind(empty_to_none(form.phone))
+    .bind(empty_to_none(form.address))
+    .bind(form.notes)
+    .execute(&state.pool)
+    .await?;
     Ok(Redirect::to("/sources").into_response())
 }
 

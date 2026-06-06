@@ -8,6 +8,7 @@ use crate::models::Subject;
 pub mod api;
 pub mod dashboard;
 pub mod incidents;
+pub mod providers;
 pub mod records;
 pub mod search;
 pub mod settings;

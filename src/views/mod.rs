@@ -4,6 +4,7 @@ pub mod growth;
 pub mod immunizations;
 pub mod incident;
 pub mod layout;
+pub mod provider;
 pub mod record;
 pub mod search;
 pub mod settings;

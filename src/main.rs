@@ -115,6 +115,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // sources
         .route("/sources", get(handlers::sources::list).post(handlers::sources::create))
         .route("/sources/{id}", get(handlers::sources::detail))
+        // providers (PEMR-17)
+        .route("/providers", get(handlers::providers::list).post(handlers::providers::create))
+        .route("/providers/{id}/edit", get(handlers::providers::edit_form).post(handlers::providers::edit))
         // settings: API keys
         .route(
             "/settings/api-keys",

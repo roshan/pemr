@@ -47,6 +47,7 @@ fn top_bar(nav: &Nav<'_>) -> Markup {
                     (nav_link("/incidents", "Incidents", nav.current_path))
                     (nav_link("/records",   "Records",   nav.current_path))
                     (nav_link("/sources",   "Sources",   nav.current_path))
+                    (nav_link("/providers", "Providers", nav.current_path))
                     (nav_link("/subjects",  "Subjects",  nav.current_path))
                     (nav_link("/settings/api-keys", "API keys", nav.current_path))
                 }

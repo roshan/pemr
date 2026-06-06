@@ -48,6 +48,8 @@ pub fn list_page(nav: &Nav<'_>, sources: &[Source]) -> Markup {
                         "Optional — the public URL of this portal/clinic.",
                         c::input_url("base_url", ""),
                     ))
+                    (c::field("Phone", c::input_text("phone", "", false, Some(40))))
+                    (c::field("Address", c::input_text("address", "", false, Some(200))))
                     (c::field("Notes", c::textarea_field("notes", "", 3)))
                     (c::button_primary("Add source"))
                 }))
@@ -72,6 +74,8 @@ pub fn detail_page(
                 @if let Some(u) = &source.base_url {
                     a href=(u) target="_blank" rel="noreferrer" class="text-xs" { (u) }
                 }
+                @if let Some(p) = &source.phone { span { "☎ " (p) } }
+                @if let Some(a) = &source.address { span { (a) } }
             }))
             @if !source.notes.is_empty() {
                 div class="mt-2" { (c::prose(&source.notes)) }
