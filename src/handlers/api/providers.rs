@@ -2,7 +2,7 @@
 //! subject_id). Read + idempotent-upsert write. Dedup prefers `npi` (the global
 //! key); falls back to `(source_id, external_id)` when npi is absent.
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{State};
 use axum::response::Json;
 use serde::Deserialize;
 use serde_json::Value;
@@ -11,9 +11,7 @@ use uuid::Uuid;
 
 use crate::api_auth::ApiKeyContext;
 use crate::handlers::AppState;
-use crate::handlers::api::{
-    ApiError, ApiJson, ApiResult, clamp_limit, clamp_offset, write_err,
-};
+use crate::handlers::api::{ApiError, ApiJson, ApiPath, ApiQuery, ApiResult, clamp_limit, clamp_offset, write_err};
 use crate::models::{Provider, empty_to_none};
 
 #[derive(Debug, Deserialize, Default)]
@@ -25,7 +23,7 @@ pub struct ListQuery {
 pub async fn list(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Query(q): Query<ListQuery>,
+    ApiQuery(q): ApiQuery<ListQuery>,
 ) -> ApiResult<Json<Vec<Provider>>> {
     let rows = sqlx::query_as::<_, Provider>(
         "select * from providers order by full_name limit $1 offset $2",
@@ -40,7 +38,7 @@ pub async fn list(
 pub async fn detail(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Path(id): Path<Uuid>,
+    ApiPath(id): ApiPath<Uuid>,
 ) -> ApiResult<Json<Provider>> {
     let row = sqlx::query_as::<_, Provider>("select * from providers where id = $1")
         .bind(id)

@@ -1,11 +1,11 @@
-use axum::extract::{Path, Query, State};
+use axum::extract::{State};
 use axum::response::Json;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::api_auth::ApiKeyContext;
 use crate::handlers::AppState;
-use crate::handlers::api::{ApiError, ApiResult};
+use crate::handlers::api::{ApiError, ApiPath, ApiQuery, ApiResult};
 use crate::models::{Incident, Record, parse_subject_filter};
 
 #[derive(Debug, Deserialize, Default)]
@@ -18,7 +18,7 @@ pub struct ListQuery {
 pub async fn list(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Query(q): Query<ListQuery>,
+    ApiQuery(q): ApiQuery<ListQuery>,
 ) -> ApiResult<Json<Vec<Incident>>> {
     let subject = parse_subject_filter(q.subject.as_deref())
         .map_err(ApiError::bad_request)?;
@@ -50,7 +50,7 @@ pub struct IncidentDetail {
 pub async fn detail(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Path(id): Path<Uuid>,
+    ApiPath(id): ApiPath<Uuid>,
 ) -> ApiResult<Json<IncidentDetail>> {
     let incident = sqlx::query_as::<_, Incident>(
         "select id, subject_id, title, narrative, occurred_at, occurred_precision,

@@ -5,7 +5,7 @@
 //! every read/returning projects them with `::float8`. On insert, binding f64
 //! into the numeric columns relies on the implicit assignment cast.
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{State};
 use axum::response::Json;
 use serde::Deserialize;
 use serde_json::Value;
@@ -14,10 +14,7 @@ use uuid::Uuid;
 
 use crate::api_auth::ApiKeyContext;
 use crate::handlers::AppState;
-use crate::handlers::api::{
-    ApiError, ApiJson, ApiResult, clamp_limit, clamp_offset, provenance_conflict, validate_in,
-    write_err,
-};
+use crate::handlers::api::{ApiError, ApiJson, ApiPath, ApiQuery, ApiResult, clamp_limit, clamp_offset, provenance_conflict, validate_in, write_err};
 use crate::models::{
     DATE_PRECISIONS, OBSERVATION_ABNORMAL_FLAGS, OBSERVATION_CATEGORIES, Observation,
     parse_subject_filter,
@@ -42,7 +39,7 @@ pub struct ListQuery {
 pub async fn list(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Query(q): Query<ListQuery>,
+    ApiQuery(q): ApiQuery<ListQuery>,
 ) -> ApiResult<Json<Vec<Observation>>> {
     let subject = parse_subject_filter(q.subject.as_deref()).map_err(ApiError::bad_request)?;
     let code = q
@@ -70,7 +67,7 @@ pub async fn list(
 pub async fn detail(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Path(id): Path<Uuid>,
+    ApiPath(id): ApiPath<Uuid>,
 ) -> ApiResult<Json<Observation>> {
     let sql = format!("select {COLS} from observations where id = $1");
     let row = sqlx::query_as::<_, Observation>(&sql)

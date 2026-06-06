@@ -1,11 +1,11 @@
-use axum::extract::{Path, State};
+use axum::extract::{State};
 use axum::response::Json;
 use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::api_auth::ApiKeyContext;
 use crate::handlers::AppState;
-use crate::handlers::api::{ApiError, ApiJson, ApiResult, validate_in, write_err};
+use crate::handlers::api::{ApiError, ApiJson, ApiPath, ApiResult, validate_in, write_err};
 use crate::models::{SOURCE_KINDS, Source};
 
 pub async fn list(
@@ -21,7 +21,7 @@ pub async fn list(
 pub async fn detail(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Path(id): Path<Uuid>,
+    ApiPath(id): ApiPath<Uuid>,
 ) -> ApiResult<Json<Source>> {
     let row = sqlx::query_as::<_, Source>("select * from sources where id = $1")
         .bind(id)

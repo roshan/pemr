@@ -2,16 +2,14 @@
 //! Read (list) + idempotent-upsert keyed on the
 //! (subject_id, related_subject_id, relationship) PK.
 
-use axum::extract::{Query, State};
+use axum::extract::{State};
 use axum::response::Json;
 use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::api_auth::ApiKeyContext;
 use crate::handlers::AppState;
-use crate::handlers::api::{
-    ApiError, ApiJson, ApiResult, clamp_limit, clamp_offset, validate_in, write_err,
-};
+use crate::handlers::api::{ApiError, ApiJson, ApiQuery, ApiResult, clamp_limit, clamp_offset, validate_in, write_err};
 use crate::models::{SUBJECT_RELATIONSHIP_KINDS, SubjectRelationship, parse_subject_filter};
 
 #[derive(Debug, Deserialize, Default)]
@@ -24,7 +22,7 @@ pub struct ListQuery {
 pub async fn list(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Query(q): Query<ListQuery>,
+    ApiQuery(q): ApiQuery<ListQuery>,
 ) -> ApiResult<Json<Vec<SubjectRelationship>>> {
     let subject = parse_subject_filter(q.subject.as_deref()).map_err(ApiError::bad_request)?;
     let rows = sqlx::query_as::<_, SubjectRelationship>(

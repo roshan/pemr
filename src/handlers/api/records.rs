@@ -1,5 +1,5 @@
 use axum::body::Body;
-use axum::extract::{Path, Query, State};
+use axum::extract::{State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
 use serde::Deserialize;
@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::api_auth::ApiKeyContext;
 use crate::files;
 use crate::handlers::AppState;
-use crate::handlers::api::{ApiError, ApiResult};
+use crate::handlers::api::{ApiError, ApiPath, ApiQuery, ApiResult};
 use crate::models::{Record, parse_subject_filter};
 
 #[derive(Debug, Deserialize, Default)]
@@ -24,7 +24,7 @@ pub struct ListQuery {
 pub async fn list(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Query(q): Query<ListQuery>,
+    ApiQuery(q): ApiQuery<ListQuery>,
 ) -> ApiResult<Json<Vec<Record>>> {
     let subject = parse_subject_filter(q.subject.as_deref())
         .map_err(ApiError::bad_request)?;
@@ -62,7 +62,7 @@ pub async fn list(
 pub async fn detail(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Path(id): Path<Uuid>,
+    ApiPath(id): ApiPath<Uuid>,
 ) -> ApiResult<Json<Record>> {
     let row = sqlx::query_as::<_, Record>(
         "select id, subject_id, kind, title, notes, occurred_at, occurred_precision,
@@ -84,7 +84,7 @@ pub async fn detail(
 pub async fn file(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Path(id): Path<Uuid>,
+    ApiPath(id): ApiPath<Uuid>,
 ) -> ApiResult<Response> {
     let (file_path, content_type, byte_size, title): (
         Option<String>,
@@ -104,7 +104,7 @@ pub async fn file(
 pub async fn preview(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Path(id): Path<Uuid>,
+    ApiPath(id): ApiPath<Uuid>,
 ) -> ApiResult<Response> {
     let (path, ct, title): (Option<String>, Option<String>, String) = sqlx::query_as(
         "select preview_path, preview_content_type, title from records where id = $1",
@@ -119,7 +119,7 @@ pub async fn preview(
 pub async fn thumbnail(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Path(id): Path<Uuid>,
+    ApiPath(id): ApiPath<Uuid>,
 ) -> ApiResult<Response> {
     let (path, ct, title): (Option<String>, Option<String>, String) = sqlx::query_as(
         "select thumbnail_path, thumbnail_content_type, title from records where id = $1",

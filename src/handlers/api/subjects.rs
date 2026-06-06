@@ -1,10 +1,10 @@
-use axum::extract::{Path, State};
+use axum::extract::{State};
 use axum::response::Json;
 use uuid::Uuid;
 
 use crate::api_auth::ApiKeyContext;
 use crate::handlers::AppState;
-use crate::handlers::api::{ApiError, ApiResult};
+use crate::handlers::api::{ApiError, ApiPath, ApiResult};
 use crate::models::Subject;
 
 pub async fn list(
@@ -22,7 +22,7 @@ pub async fn list(
 pub async fn detail(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Path(id): Path<Uuid>,
+    ApiPath(id): ApiPath<Uuid>,
 ) -> ApiResult<Json<Subject>> {
     let row = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
         .bind(id)

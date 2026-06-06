@@ -1,11 +1,11 @@
-use axum::extract::{Query, State};
+use axum::extract::{State};
 use axum::response::Json;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::api_auth::ApiKeyContext;
 use crate::handlers::AppState;
-use crate::handlers::api::{ApiError, ApiResult};
+use crate::handlers::api::{ApiError, ApiQuery, ApiResult};
 use crate::models::{Incident, Record, parse_subject_filter};
 
 #[derive(Debug, Deserialize)]
@@ -25,7 +25,7 @@ pub struct SearchResponse {
 pub async fn search(
     State(state): State<AppState>,
     _ctx: ApiKeyContext,
-    Query(q): Query<SearchQuery>,
+    ApiQuery(q): ApiQuery<SearchQuery>,
 ) -> ApiResult<Json<SearchResponse>> {
     let query = q.q.unwrap_or_default();
     let subject = parse_subject_filter(q.subject.as_deref())
