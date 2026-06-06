@@ -229,6 +229,52 @@ pub async fn detail(
     Ok(subject::dashboard_page(&nav, &s, &summary, &data))
 }
 
+/// `/subjects/{id}/growth` — growth trend charts (PEMR-24).
+pub async fn growth(
+    State(state): State<AppState>,
+    viewer: ViewerContext,
+    Path(id): Path<Uuid>,
+) -> AppResult<Markup> {
+    use crate::views::growth::GrowthSeries;
+    let subjects = load_subjects(&state.pool).await?;
+    let s = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?;
+
+    async fn measure(
+        pool: &sqlx::PgPool,
+        subject: Uuid,
+        code: &str,
+    ) -> Result<Vec<(time::Date, f64)>, sqlx::Error> {
+        sqlx::query_as::<_, (time::Date, f64)>(
+            "select effective_on, value_num::float8
+               from observations
+              where subject_id = $1 and code = $2 and value_num is not null
+              order by effective_on asc",
+        )
+        .bind(subject)
+        .bind(code)
+        .fetch_all(pool)
+        .await
+    }
+
+    let series = vec![
+        GrowthSeries { label: "Weight", unit: "kg", points: measure(&state.pool, id, "29463-7").await? },
+        GrowthSeries { label: "Height / length", unit: "cm", points: measure(&state.pool, id, "8302-2").await? },
+        GrowthSeries { label: "Head circumference", unit: "cm", points: measure(&state.pool, id, "9843-4").await? },
+    ];
+
+    let nav = Nav {
+        title: &s.full_name,
+        current_path: "/subjects",
+        subjects: &subjects,
+        current_subject: Some(id),
+        viewer: &viewer,
+    };
+    Ok(crate::views::growth::page(&nav, &s, &series))
+}
+
 pub async fn edit_form(
     State(state): State<AppState>,
     viewer: ViewerContext,

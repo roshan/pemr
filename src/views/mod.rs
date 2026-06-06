@@ -1,5 +1,6 @@
 pub mod components;
 pub mod dashboard;
+pub mod growth;
 pub mod incident;
 pub mod layout;
 pub mod record;

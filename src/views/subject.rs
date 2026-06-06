@@ -231,7 +231,10 @@ fn bio_header(subject: &Subject) -> Markup {
                     p class="text-sm text-ink/80 mt-1 max-w-2xl" { (subject.notes) }
                 }
             }
-            (c::button_link_secondary(format!("/subjects/{}/edit", subject.id), "Edit profile"))
+            div class="flex gap-2" {
+                (c::button_link_secondary(format!("/subjects/{}/growth", subject.id), "Growth charts"))
+                (c::button_link_secondary(format!("/subjects/{}/edit", subject.id), "Edit profile"))
+            }
         }
     }
 }
