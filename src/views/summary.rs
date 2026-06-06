@@ -60,7 +60,8 @@ pub fn page(nav: &Nav<'_>, subject: &Subject, cs: &ClinicalSummary) -> Markup {
                 @for a in &cs.allergies {
                     (c::panel_list_item(html! { (a.substance) },
                         html! {
-                            @if let Some(sev) = &a.severity { (sev) }
+                            @if let Some(crit) = &a.criticality { (crit) }
+                            @else if let Some(sev) = &a.severity { (sev) }
                             @if let Some(r) = &a.reaction { " — " (r) }
                         }))
                 }
