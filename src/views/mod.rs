@@ -9,3 +9,4 @@ pub mod search;
 pub mod settings;
 pub mod source;
 pub mod subject;
+pub mod summary;

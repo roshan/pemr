@@ -26,7 +26,7 @@ pub fn shell(nav: &Nav<'_>, body: Markup) -> Markup {
             body class="min-h-screen text-ink antialiased" {
                 (top_bar(nav))
                 main class="mx-auto max-w-5xl px-4 py-6" { (body) }
-                footer class="mx-auto max-w-5xl px-4 py-6 text-xs text-muted" {
+                footer class="mx-auto max-w-5xl px-4 py-6 text-xs text-muted print:hidden" {
                     "personal EMR · "
                     a href="/healthz" class="hover:text-brand" { "healthz" }
                 }
@@ -37,7 +37,7 @@ pub fn shell(nav: &Nav<'_>, body: Markup) -> Markup {
 
 fn top_bar(nav: &Nav<'_>) -> Markup {
     html! {
-        header class="sticky top-0 z-10 bg-surface/90 backdrop-blur border-b border-line" {
+        header class="sticky top-0 z-10 bg-surface/90 backdrop-blur border-b border-line print:hidden" {
             div class="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-4" {
                 a href="/" class="flex items-center gap-2 text-ink hover:text-brand hover:no-underline" {
                     span class="font-semibold tracking-tight" { "personal-emr" }

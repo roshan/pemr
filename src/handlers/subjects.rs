@@ -148,77 +148,7 @@ pub async fn detail(
     .fetch_all(&state.pool)
     .await?;
 
-    // Clinical summary for the chart (reads the Phase 1/2 tables).
-    let allergies = sqlx::query_as::<_, Allergy>(
-        "select * from allergies where subject_id = $1 and status <> 'entered_in_error'
-          order by created_at desc",
-    )
-    .bind(id)
-    .fetch_all(&state.pool)
-    .await?;
-    let medications = sqlx::query_as::<_, Medication>(
-        "select * from medications where subject_id = $1 and status = 'active'
-          order by created_at desc",
-    )
-    .bind(id)
-    .fetch_all(&state.pool)
-    .await?;
-    let conditions = sqlx::query_as::<_, Condition>(
-        "select * from conditions where subject_id = $1 and status = 'active'
-          order by onset_date desc nulls last, created_at desc",
-    )
-    .bind(id)
-    .fetch_all(&state.pool)
-    .await?;
-    let immunizations = sqlx::query_as::<_, Immunization>(
-        "select * from immunizations where subject_id = $1
-          order by occurred_at desc nulls last, created_at desc",
-    )
-    .bind(id)
-    .fetch_all(&state.pool)
-    .await?;
-    let vaccines_due = match s.dob {
-        Some(dob) => crate::peds::forecast(dob, &immunizations, crate::peds::today())
-            .iter()
-            .filter(|d| d.status != "upcoming")
-            .count(),
-        None => 0,
-    };
-    let vitals = sqlx::query_as::<_, VitalRow>(
-        "select display, value_num::float8 as value_num, value_text, unit, effective_on, abnormal_flag
-           from observations where subject_id = $1
-          order by effective_on desc, created_at desc limit 8",
-    )
-    .bind(id)
-    .fetch_all(&state.pool)
-    .await?;
-    let upcoming_appts = sqlx::query_as::<_, Appointment>(
-        "select * from appointments where subject_id = $1 and starts_at >= now()
-          order by starts_at asc limit 6",
-    )
-    .bind(id)
-    .fetch_all(&state.pool)
-    .await?;
-    let care_team = sqlx::query_as::<_, CareTeamMember>(
-        "select sp.role, p.full_name, p.specialty
-           from subject_providers sp join providers p on p.id = sp.provider_id
-          where sp.subject_id = $1 and sp.active
-          order by p.full_name",
-    )
-    .bind(id)
-    .fetch_all(&state.pool)
-    .await?;
-    let summary = subject::ClinicalSummary {
-        no_known_allergies: s.no_known_allergies,
-        allergies,
-        medications,
-        conditions,
-        immunizations,
-        vitals,
-        upcoming_appts,
-        care_team,
-        vaccines_due,
-    };
+    let summary = clinical_summary_for(&state.pool, &s).await?;
 
     let nav = Nav {
         title: &s.full_name,
@@ -235,6 +165,106 @@ pub async fn detail(
         recent_records: &recent_records,
     };
     Ok(subject::dashboard_page(&nav, &s, &summary, &data))
+}
+
+/// Loads the clinical summary (Phase 1/2 tables) shared by the subject chart
+/// and the printable summary.
+async fn clinical_summary_for(
+    pool: &sqlx::PgPool,
+    s: &Subject,
+) -> Result<subject::ClinicalSummary, sqlx::Error> {
+    let allergies = sqlx::query_as::<_, Allergy>(
+        "select * from allergies where subject_id = $1 and status <> 'entered_in_error'
+          order by created_at desc",
+    )
+    .bind(s.id)
+    .fetch_all(pool)
+    .await?;
+    let medications = sqlx::query_as::<_, Medication>(
+        "select * from medications where subject_id = $1 and status = 'active'
+          order by created_at desc",
+    )
+    .bind(s.id)
+    .fetch_all(pool)
+    .await?;
+    let conditions = sqlx::query_as::<_, Condition>(
+        "select * from conditions where subject_id = $1 and status = 'active'
+          order by onset_date desc nulls last, created_at desc",
+    )
+    .bind(s.id)
+    .fetch_all(pool)
+    .await?;
+    let immunizations = sqlx::query_as::<_, Immunization>(
+        "select * from immunizations where subject_id = $1
+          order by occurred_at desc nulls last, created_at desc",
+    )
+    .bind(s.id)
+    .fetch_all(pool)
+    .await?;
+    let vaccines_due = match s.dob {
+        Some(dob) => crate::peds::forecast(dob, &immunizations, crate::peds::today())
+            .iter()
+            .filter(|d| d.status != "upcoming")
+            .count(),
+        None => 0,
+    };
+    let vitals = sqlx::query_as::<_, VitalRow>(
+        "select display, value_num::float8 as value_num, value_text, unit, effective_on, abnormal_flag
+           from observations where subject_id = $1
+          order by effective_on desc, created_at desc limit 8",
+    )
+    .bind(s.id)
+    .fetch_all(pool)
+    .await?;
+    let upcoming_appts = sqlx::query_as::<_, Appointment>(
+        "select * from appointments where subject_id = $1 and starts_at >= now()
+          order by starts_at asc limit 6",
+    )
+    .bind(s.id)
+    .fetch_all(pool)
+    .await?;
+    let care_team = sqlx::query_as::<_, CareTeamMember>(
+        "select sp.role, p.full_name, p.specialty
+           from subject_providers sp join providers p on p.id = sp.provider_id
+          where sp.subject_id = $1 and sp.active
+          order by p.full_name",
+    )
+    .bind(s.id)
+    .fetch_all(pool)
+    .await?;
+    Ok(subject::ClinicalSummary {
+        no_known_allergies: s.no_known_allergies,
+        allergies,
+        medications,
+        conditions,
+        immunizations,
+        vitals,
+        upcoming_appts,
+        care_team,
+        vaccines_due,
+    })
+}
+
+/// `/subjects/{id}/summary` — print-friendly one-page health summary (PEMR-27).
+pub async fn summary(
+    State(state): State<AppState>,
+    viewer: ViewerContext,
+    Path(id): Path<Uuid>,
+) -> AppResult<Markup> {
+    let subjects = load_subjects(&state.pool).await?;
+    let s = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?;
+    let cs = clinical_summary_for(&state.pool, &s).await?;
+    let nav = Nav {
+        title: &s.full_name,
+        current_path: "/subjects",
+        subjects: &subjects,
+        current_subject: Some(id),
+        viewer: &viewer,
+    };
+    Ok(crate::views::summary::page(&nav, &s, &cs))
 }
 
 /// `/subjects/{id}/immunizations` — immunization record + forecast (PEMR-25).

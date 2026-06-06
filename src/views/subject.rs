@@ -236,7 +236,8 @@ fn bio_header(subject: &Subject) -> Markup {
                     p class="text-sm text-ink/80 mt-1 max-w-2xl" { (subject.notes) }
                 }
             }
-            div class="flex gap-2" {
+            div class="flex flex-wrap gap-2" {
+                (c::button_link_secondary(format!("/subjects/{}/summary", subject.id), "Summary (print)"))
                 (c::button_link_secondary(format!("/subjects/{}/immunizations", subject.id), "Immunizations"))
                 (c::button_link_secondary(format!("/subjects/{}/growth", subject.id), "Growth charts"))
                 (c::button_link_secondary(format!("/subjects/{}/edit", subject.id), "Edit profile"))
