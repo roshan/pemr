@@ -7,6 +7,7 @@ use crate::models::Subject;
 
 pub mod api;
 pub mod appointments;
+pub mod care_team;
 pub mod dashboard;
 pub mod incidents;
 pub mod providers;

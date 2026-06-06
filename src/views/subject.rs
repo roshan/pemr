@@ -240,6 +240,7 @@ fn bio_header(subject: &Subject) -> Markup {
                 (c::button_link_secondary(format!("/subjects/{}/summary", subject.id), "Summary (print)"))
                 (c::button_link_secondary(format!("/subjects/{}/appointments", subject.id), "Appointments"))
                 (c::button_link_secondary(format!("/subjects/{}/immunizations", subject.id), "Immunizations"))
+                (c::button_link_secondary(format!("/subjects/{}/care-team", subject.id), "Care team & IDs"))
                 (c::button_link_secondary(format!("/subjects/{}/growth", subject.id), "Growth charts"))
                 (c::button_link_secondary(format!("/subjects/{}/edit", subject.id), "Edit profile"))
             }

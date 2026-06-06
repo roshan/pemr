@@ -1,4 +1,5 @@
 pub mod appointment;
+pub mod care_team;
 pub mod components;
 pub mod dashboard;
 pub mod growth;

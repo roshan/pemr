@@ -179,6 +179,18 @@ pub struct HtmxDelete {
     pub confirm: Option<String>,
 }
 
+/// A small inline form+button for a plain (non-HTMX) POST action, e.g. "remove".
+pub fn post_button(action: impl Render, label: impl Render) -> Markup {
+    html! {
+        form action=(action) method="post" class="inline" {
+            button type="submit"
+                class="rounded px-2 py-0.5 text-xs font-medium text-danger hover:bg-rose-50" {
+                (label)
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Forms
 // ---------------------------------------------------------------------------

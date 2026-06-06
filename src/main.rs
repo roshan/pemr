@@ -120,6 +120,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/appointments/{id}/edit",
             get(handlers::appointments::edit_form).post(handlers::appointments::edit),
         )
+        // care team + identifiers (PEMR-17)
+        .route(
+            "/subjects/{id}/care-team",
+            get(handlers::care_team::page).post(handlers::care_team::add_provider),
+        )
+        .route(
+            "/subjects/{id}/care-team/{pid}/remove",
+            post(handlers::care_team::remove_provider),
+        )
+        .route(
+            "/subjects/{id}/identifiers",
+            post(handlers::care_team::add_identifier),
+        )
+        .route(
+            "/subjects/{id}/identifiers/{iid}/remove",
+            post(handlers::care_team::remove_identifier),
+        )
         // sources
         .route("/sources", get(handlers::sources::list).post(handlers::sources::create))
         .route("/sources/{id}", get(handlers::sources::detail))
