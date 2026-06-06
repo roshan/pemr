@@ -64,6 +64,12 @@ Durable project knowledge — overview, API reference, anything an agent would w
 | `static/vendor/app.css` | compiled by `bin/tailwindcss` from `tailwind.css` | regenerate via `mise run css`; do not hand-edit |
 | `bin/tailwindcss` | tailwindlabs GitHub release (gitignored) | v4.2.4 (macos-arm64) — `932f7045205283f4b26f9a4c3f027958526bf5bcc8577a7e2f18002e1eb5145e` |
 
+### Vendored data
+
+| File | Source | Notes |
+|---|---|---|
+| `src/peds_data/cdc_{weight,length,headcirc}_for_age_0_36mo.csv` | CDC growth-chart LMS data files (`cdc.gov/growthcharts/data/zscore/{wtageinf,lenageinf,hcageinf}.csv`) | Public domain (US gov). `include_str!`-embedded by `growth_ref.rs` for growth percentile bands. CDC 0–36 mo infant charts (carry precomputed P3–P97 columns). |
+
 ## DICOM import
 
 `POST /records/import` accepts a multi-file multipart upload (the form uses `<input webkitdirectory>` so the user picks the parent folder of a Sutter / Lexmark export). For each uploaded file:

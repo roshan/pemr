@@ -4,6 +4,7 @@ mod db;
 mod dicom_import;
 mod error;
 mod files;
+mod growth_ref;
 mod handlers;
 mod images;
 mod models;

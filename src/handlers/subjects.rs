@@ -315,6 +315,7 @@ pub async fn growth(
     viewer: ViewerContext,
     Path(id): Path<Uuid>,
 ) -> AppResult<Markup> {
+    use crate::growth_ref::{self, Measure};
     use crate::views::growth::GrowthSeries;
     let subjects = load_subjects(&state.pool).await?;
     let s = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
@@ -322,7 +323,7 @@ pub async fn growth(
         .fetch_one(&state.pool)
         .await?;
 
-    async fn measure(
+    async fn raw(
         pool: &sqlx::PgPool,
         subject: Uuid,
         code: &str,
@@ -339,11 +340,28 @@ pub async fn growth(
         .await
     }
 
-    let series = vec![
-        GrowthSeries { label: "Weight", unit: "kg", points: measure(&state.pool, id, "29463-7").await? },
-        GrowthSeries { label: "Height / length", unit: "cm", points: measure(&state.pool, id, "8302-2").await? },
-        GrowthSeries { label: "Head circumference", unit: "cm", points: measure(&state.pool, id, "9843-4").await? },
-    ];
+    let sex = growth_ref::sex_code(s.sex_at_birth.as_deref());
+    let mut series: Vec<GrowthSeries> = Vec::new();
+    if let Some(dob) = s.dob {
+        let dob_jd = dob.to_julian_day();
+        let to_age = |rows: Vec<(time::Date, f64)>| -> Vec<(f64, f64)> {
+            rows.into_iter()
+                .map(|(d, v)| ((d.to_julian_day() - dob_jd) as f64 / 30.4375, v))
+                .collect()
+        };
+        for (label, unit, code, measure) in [
+            ("Weight", "kg", "29463-7", Measure::Weight),
+            ("Length / height", "cm", "8302-2", Measure::Length),
+            ("Head circumference", "cm", "9843-4", Measure::HeadCirc),
+        ] {
+            let points = to_age(raw(&state.pool, id, code).await?);
+            let reference = match sex {
+                Some(sx) => growth_ref::curve(measure, sx),
+                None => Vec::new(),
+            };
+            series.push(GrowthSeries { label, unit, points, reference });
+        }
+    }
 
     let nav = Nav {
         title: &s.full_name,
@@ -352,7 +370,13 @@ pub async fn growth(
         current_subject: Some(id),
         viewer: &viewer,
     };
-    Ok(crate::views::growth::page(&nav, &s, &series))
+    Ok(crate::views::growth::page(
+        &nav,
+        &s,
+        &series,
+        s.dob.is_some(),
+        sex.is_some(),
+    ))
 }
 
 pub async fn edit_form(
