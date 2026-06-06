@@ -128,6 +128,22 @@ The `/records/import` form has **no subject / source / link-incident fields**. B
 
 Either path produces the same record set; the user can switch when one is being awkward in their browser.
 
+## Bundle import — FHIR / C-CDA / MyChart (`importer.rs`)
+
+Structured clinical exports (allergies, meds, problems, immunizations, labs, vitals) land via `importer.rs`, **not** the DICOM/records path. Two entry points share the same parse + upsert core:
+
+- **Offline CLI (primary):** `personal-emr import <zip|xml|json|dir> [--subject <uuid|name>] [--source <name>] [--commit]`. The binary detects the `import` subcommand in `main.rs` and runs `import_cli::run` instead of the server — connects straight to `DATABASE_URL`, no running server / API token / Cloudflare. **Dry-run by default** (parses + prints an extraction preview, writes nothing); `--commit` performs the upsert inside one transaction (all-or-nothing). Subject auto-detects from the document's `recordTarget` patient name (matched against `subjects`), overridable with `--subject`; source defaults to `MyChart import`, created if new. This is how family MyChart dumps are bulk-loaded (3 orgs × 3 people), so it stays a CLI, not a web upload.
+- **API (`POST /api/v1/import/{fhir,ccda}`):** bearer-auth, one document per request (single C-CDA XML or FHIR Bundle JSON). Still works; uses the same `import_ccda`/`import_fhir`.
+
+**C-CDA parsing is validated against real Epic ("Lucy") exports — not just the spec.** Hard-won facts the parser depends on (do not regress):
+
+- **Entries are matched by `templateId` root**, never by `displayName`. Real Epic exports routinely omit `@displayName` and the original spec-only parser extracted almost nothing (it even mistook the nested *Status="Active"* observation for the problem name). Roots: allergy obs `…22.4.7`, problem obs `…22.4.4`, medication activity `…22.4.16`, immunization `…22.4.52`, result obs `…22.4.2`, vital obs `…22.4.27`.
+- **Names come from `<originalText>` / narrative references.** `resolve_display` tries inline `originalText` → a `<reference value="#id"/>` resolved against `narrative_map` (every element with an `ID` attr → its text) → `@displayName` → `<translation>` displayName. Allergen names come from `participant/playingEntity/name`.
+- **`el_text` collects only genuine text nodes** (`Node::is_text`) — iterating `descendants()` and calling `.text()` on element nodes too double-counts (it returns the element's first text child).
+- **Idempotency / dedup keys on the HL7 `<id root^extension>`** (`entry_id`), stored as `external_id`. The same allergy/problem repeats across all 35 docs in a package but carries the same id, so importing the whole IHE_XDM zip dedups to one row while keeping distinct per-visit labs. Re-importing upserts on `(source_id, external_id)`.
+- **IHE_XDM zips:** `load_documents` expands the zip (or walks a directory) and imports **every** `DOC*.XML`, deduped as above (`import_ccda_docs`).
+- Captures more than the originals: `code_system` (normalized via `norm_system`), lab `ref_low`/`ref_high` + `abnormal_flag` (from `referenceRange`/`interpretationCode`), `panel_id` (deterministic per result `<organizer>` so a CBC's analytes group), allergy `reaction`/`severity`, condition `status` (defaults to `active` — `conditions.status` is NOT NULL).
+
 ## Schema rules
 
 - Every clinically-meaningful entity table carries `subject_id uuid not null references subjects(id)`. Non-negotiable. Do not add a clinical entity without this.

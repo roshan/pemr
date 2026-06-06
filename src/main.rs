@@ -7,6 +7,7 @@ mod files;
 mod growth_ref;
 mod handlers;
 mod images;
+mod import_cli;
 mod importer;
 mod models;
 mod peds;
@@ -32,6 +33,17 @@ use crate::viewer::ViewerConfig;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Offline subcommand: `personal-emr import <path> ...` upserts a MyChart /
+    // C-CDA / FHIR export straight into DATABASE_URL and exits — no server.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("import") {
+        if let Err(e) = import_cli::run(&argv[2..]).await {
+            eprintln!("import error: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
