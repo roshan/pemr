@@ -172,11 +172,18 @@ pub async fn detail(
     .await?;
     let immunizations = sqlx::query_as::<_, Immunization>(
         "select * from immunizations where subject_id = $1
-          order by occurred_at desc nulls last, created_at desc limit 12",
+          order by occurred_at desc nulls last, created_at desc",
     )
     .bind(id)
     .fetch_all(&state.pool)
     .await?;
+    let vaccines_due = match s.dob {
+        Some(dob) => crate::peds::forecast(dob, &immunizations, crate::peds::today())
+            .iter()
+            .filter(|d| d.status != "upcoming")
+            .count(),
+        None => 0,
+    };
     let vitals = sqlx::query_as::<_, VitalRow>(
         "select display, value_num::float8 as value_num, value_text, unit, effective_on, abnormal_flag
            from observations where subject_id = $1
@@ -210,6 +217,7 @@ pub async fn detail(
         vitals,
         upcoming_appts,
         care_team,
+        vaccines_due,
     };
 
     let nav = Nav {
@@ -227,6 +235,48 @@ pub async fn detail(
         recent_records: &recent_records,
     };
     Ok(subject::dashboard_page(&nav, &s, &summary, &data))
+}
+
+/// `/subjects/{id}/immunizations` — immunization record + forecast (PEMR-25).
+pub async fn immunizations(
+    State(state): State<AppState>,
+    viewer: ViewerContext,
+    Path(id): Path<Uuid>,
+) -> AppResult<Markup> {
+    let subjects = load_subjects(&state.pool).await?;
+    let s = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?;
+    let received = sqlx::query_as::<_, Immunization>(
+        "select * from immunizations where subject_id = $1
+          order by occurred_at desc nulls last, created_at desc",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    let (due, well_visits) = match s.dob {
+        Some(dob) => (
+            crate::peds::forecast(dob, &received, crate::peds::today()),
+            crate::peds::well_child(dob, crate::peds::today()),
+        ),
+        None => (Vec::new(), Vec::new()),
+    };
+    let nav = Nav {
+        title: &s.full_name,
+        current_path: "/subjects",
+        subjects: &subjects,
+        current_subject: Some(id),
+        viewer: &viewer,
+    };
+    Ok(crate::views::immunizations::page(
+        &nav,
+        &s,
+        &received,
+        &due,
+        &well_visits,
+        s.dob.is_some(),
+    ))
 }
 
 /// `/subjects/{id}/growth` — growth trend charts (PEMR-24).

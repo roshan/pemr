@@ -99,9 +99,14 @@ pub fn muted(text: impl Render) -> Markup {
     html! { span class="text-xs text-muted" { (text) } }
 }
 
-/// A warning-toned badge (e.g. an abnormal lab flag, an overdue item).
+/// A warning-toned badge (e.g. an abnormal lab flag, a due item).
 pub fn badge_warn(text: impl Render) -> Markup {
     html! { span class={(BADGE_BASE) " bg-amber-100 text-amber-800"} { (text) } }
+}
+
+/// A danger-toned badge (e.g. an overdue item).
+pub fn badge_danger(text: impl Render) -> Markup {
+    html! { span class={(BADGE_BASE) " bg-rose-100 text-rose-700"} { (text) } }
 }
 
 // ---------------------------------------------------------------------------

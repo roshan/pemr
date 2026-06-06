@@ -7,6 +7,7 @@ mod files;
 mod handlers;
 mod images;
 mod models;
+mod peds;
 mod viewer;
 mod views;
 
@@ -108,6 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/subjects/{id}/incidents", get(handlers::incidents::list_for_subject))
         .route("/subjects/{id}/timeline", get(handlers::dashboard::timeline_for_subject))
         .route("/subjects/{id}/growth", get(handlers::subjects::growth))
+        .route("/subjects/{id}/immunizations", get(handlers::subjects::immunizations))
         // sources
         .route("/sources", get(handlers::sources::list).post(handlers::sources::create))
         .route("/sources/{id}", get(handlers::sources::detail))

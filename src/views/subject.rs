@@ -84,6 +84,8 @@ pub struct ClinicalSummary {
     pub vitals: Vec<VitalRow>,
     pub upcoming_appts: Vec<Appointment>,
     pub care_team: Vec<CareTeamMember>,
+    /// Vaccines due or overdue (from the forecast), for the panel badge.
+    pub vaccines_due: usize,
 }
 
 fn fmt_num(n: f64) -> String {
@@ -161,7 +163,10 @@ fn clinical_summary(cs: &ClinicalSummary) -> Markup {
                         }
                     })
                 }))
-                (c::summary_panel("Immunizations", if cs.immunizations.is_empty() {
+                (c::summary_panel(html! {
+                    "Immunizations"
+                    @if cs.vaccines_due > 0 { " " (c::badge_warn(format!("{} due", cs.vaccines_due))) }
+                }, if cs.immunizations.is_empty() {
                     c::empty_state("No immunizations recorded")
                 } else {
                     c::panel_list(html! {
@@ -232,6 +237,7 @@ fn bio_header(subject: &Subject) -> Markup {
                 }
             }
             div class="flex gap-2" {
+                (c::button_link_secondary(format!("/subjects/{}/immunizations", subject.id), "Immunizations"))
                 (c::button_link_secondary(format!("/subjects/{}/growth", subject.id), "Growth charts"))
                 (c::button_link_secondary(format!("/subjects/{}/edit", subject.id), "Edit profile"))
             }
