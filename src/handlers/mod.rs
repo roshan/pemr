@@ -13,6 +13,7 @@ pub mod dashboard;
 pub mod incidents;
 pub mod providers;
 pub mod records;
+pub mod reminders;
 pub mod search;
 pub mod settings;
 pub mod sources;

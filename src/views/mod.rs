@@ -9,6 +9,7 @@ pub mod incident;
 pub mod layout;
 pub mod provider;
 pub mod record;
+pub mod reminders;
 pub mod search;
 pub mod settings;
 pub mod source;

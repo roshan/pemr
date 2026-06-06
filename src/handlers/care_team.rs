@@ -9,8 +9,8 @@ use uuid::Uuid;
 use crate::error::{AppError, AppResult};
 use crate::handlers::{AppState, load_subjects};
 use crate::models::{
-    Provider, SUBJECT_IDENTIFIER_TYPES, SUBJECT_PROVIDER_ROLES, Source, Subject, SubjectIdentifier,
-    SubjectProvider, parse_date,
+    Provider, SUBJECT_IDENTIFIER_TYPES, SUBJECT_PROVIDER_ROLES, SUBJECT_RELATIONSHIP_KINDS, Source,
+    Subject, SubjectIdentifier, SubjectProvider, SubjectRelationship, parse_date,
 };
 use crate::viewer::ViewerContext;
 use crate::views::care_team;
@@ -48,6 +48,12 @@ pub async fn page(
     let sources = sqlx::query_as::<_, Source>("select * from sources order by name")
         .fetch_all(&state.pool)
         .await?;
+    let relationships = sqlx::query_as::<_, SubjectRelationship>(
+        "select * from subject_relationships where subject_id = $1 order by created_at",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
     let nav = Nav {
         title: &s.full_name,
         current_path: "/subjects",
@@ -55,7 +61,46 @@ pub async fn page(
         current_subject: Some(id),
         viewer: &viewer,
     };
-    Ok(care_team::page(&nav, &s, &team, &providers, &identifiers, &sources))
+    Ok(care_team::page(
+        &nav,
+        &s,
+        &team,
+        &providers,
+        &identifiers,
+        &sources,
+        &relationships,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RelationshipForm {
+    pub related_subject_id: Uuid,
+    pub relationship: String,
+}
+
+pub async fn add_relationship(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Form(form): Form<RelationshipForm>,
+) -> AppResult<Response> {
+    let rel = form.relationship.trim().to_string();
+    if !SUBJECT_RELATIONSHIP_KINDS.contains(&rel.as_str()) {
+        return Err(AppError::BadRequest(format!("unknown relationship: {rel}")));
+    }
+    if form.related_subject_id == id {
+        return Err(AppError::BadRequest("cannot relate a subject to itself".into()));
+    }
+    sqlx::query(
+        "insert into subject_relationships (subject_id, related_subject_id, relationship)
+         values ($1,$2,$3)
+         on conflict (subject_id, related_subject_id, relationship) do nothing",
+    )
+    .bind(id)
+    .bind(form.related_subject_id)
+    .bind(&rel)
+    .execute(&state.pool)
+    .await?;
+    Ok(redirect(id))
 }
 
 #[derive(Debug, Deserialize)]

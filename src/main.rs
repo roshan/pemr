@@ -146,6 +146,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/subjects/{id}/identifiers/{iid}/remove",
             post(handlers::care_team::remove_identifier),
         )
+        .route(
+            "/subjects/{id}/relationships",
+            post(handlers::care_team::add_relationship),
+        )
+        // care reminders (PEMR-19)
+        .route(
+            "/subjects/{id}/reminders",
+            get(handlers::reminders::page).post(handlers::reminders::add),
+        )
+        .route(
+            "/subjects/{id}/reminders/{rid}/{status}",
+            post(handlers::reminders::mark),
+        )
         // sources
         .route("/sources", get(handlers::sources::list).post(handlers::sources::create))
         .route("/sources/{id}", get(handlers::sources::detail))

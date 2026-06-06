@@ -5,8 +5,8 @@ use maud::{Markup, html};
 use uuid::Uuid;
 
 use crate::models::{
-    Provider, SUBJECT_IDENTIFIER_TYPES, SUBJECT_PROVIDER_ROLES, Source, SubjectIdentifier,
-    SubjectProvider, Subject,
+    Provider, SUBJECT_IDENTIFIER_TYPES, SUBJECT_PROVIDER_ROLES, SUBJECT_RELATIONSHIP_KINDS, Source,
+    Subject, SubjectIdentifier, SubjectProvider, SubjectRelationship,
 };
 use crate::views::components as c;
 use crate::views::layout::{Nav, shell};
@@ -27,6 +27,14 @@ fn source_name(sources: &[Source], id: Uuid) -> String {
         .unwrap_or_else(|| "?".into())
 }
 
+fn subj_name(subjects: &[Subject], id: Uuid) -> String {
+    subjects
+        .iter()
+        .find(|s| s.id == id)
+        .map(|s| s.full_name.clone())
+        .unwrap_or_else(|| "?".into())
+}
+
 pub fn page(
     nav: &Nav<'_>,
     subject: &Subject,
@@ -34,6 +42,7 @@ pub fn page(
     providers: &[Provider],
     identifiers: &[SubjectIdentifier],
     sources: &[Source],
+    relationships: &[SubjectRelationship],
 ) -> Markup {
     let sid = subject.id;
     let body = html! {
@@ -116,6 +125,37 @@ pub fn page(
                     }))
                 }
             }, identifiers.is_empty()))
+
+            // Family / relationships (PEMR-19)
+            (c::lane(html! { (c::section_heading("Family / relationships")) }, html! {
+                @if relationships.is_empty() { (c::empty_state("None recorded.")) }
+                @else {
+                    ul class="space-y-1.5" {
+                        @for r in relationships {
+                            li class="flex items-baseline gap-2 text-sm" {
+                                (c::badge_neutral(&r.relationship))
+                                span { (subj_name(nav.subjects, r.related_subject_id)) }
+                            }
+                        }
+                    }
+                }
+            }))
+            (c::collapse_section("Add a relationship", {
+                let others: Vec<&Subject> = nav.subjects.iter().filter(|s| s.id != sid).collect();
+                if others.is_empty() {
+                    c::alert_info("No other subjects to relate to.")
+                } else {
+                    c::form(format!("/subjects/{sid}/relationships"), "post", html! {
+                        (c::field("Relationship", c::select_field("relationship", true, || html! {
+                            @for k in SUBJECT_RELATIONSHIP_KINDS { (c::select_option(k, *k, false)) }
+                        })))
+                        (c::field("Related subject", c::select_field("related_subject_id", true, || html! {
+                            @for o in &others { (c::select_option(o.id, &o.full_name, false)) }
+                        })))
+                        (c::button_primary("Add relationship"))
+                    })
+                }
+            }, relationships.is_empty()))
         }
     };
     shell(nav, body)
