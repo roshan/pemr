@@ -246,6 +246,21 @@ pub fn input_date(name: &str, value: &str) -> Markup {
     html! { input type="date" name=(name) value=(value) class=(FIELD_INPUT); }
 }
 
+pub fn input_datetime(name: &str, value: &str, required: bool) -> Markup {
+    html! {
+        input type="datetime-local" name=(name) value=(value) required[required] class=(FIELD_INPUT);
+    }
+}
+
+pub fn checkbox(name: &str, label: &str, checked: bool) -> Markup {
+    html! {
+        label class="inline-flex items-center gap-2 text-sm text-ink" {
+            input type="checkbox" name=(name) value="on" checked[checked] class="rounded border-line";
+            span { (label) }
+        }
+    }
+}
+
 pub fn input_file(name: &str) -> Markup {
     html! {
         input type="file" name=(name)

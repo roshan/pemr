@@ -6,6 +6,7 @@ use sqlx::PgPool;
 use crate::models::Subject;
 
 pub mod api;
+pub mod appointments;
 pub mod dashboard;
 pub mod incidents;
 pub mod providers;
