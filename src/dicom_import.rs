@@ -292,15 +292,15 @@ mod tests {
         println!("metadata: {meta:#?}");
         println!("title: {}", derive_title(&meta));
         println!("kind:  {}", derive_kind(&meta));
-        match render_png(&obj) {
-            Ok(png) => {
+        match render_images(&obj) {
+            Ok(imgs) => {
                 let stem = std::path::Path::new(&path)
                     .file_name()
                     .and_then(|s| s.to_str())
                     .unwrap_or("dicom");
                 let out = format!("/tmp/personal-emr-probe-{stem}.png");
-                std::fs::write(&out, &png).expect("write png");
-                println!("wrote {} ({} bytes)", out, png.len());
+                std::fs::write(&out, &imgs.png).expect("write png");
+                println!("wrote {} ({} bytes)", out, imgs.png.len());
             }
             Err(e) => println!("render failed: {e}"),
         }
