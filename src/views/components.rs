@@ -68,6 +68,42 @@ pub fn card_title(href: impl Render, label: impl Render) -> Markup {
     }
 }
 
+/// A titled summary panel for the subject clinical chart. Pass the panel body
+/// (usually a `panel_list` or an `empty_state`).
+pub fn summary_panel(title: impl Render, body: Markup) -> Markup {
+    html! {
+        section class="rounded-lg border border-line bg-surface p-4 shadow-xs" {
+            h3 class="text-sm font-semibold tracking-tight text-ink mb-2" { (title) }
+            (body)
+        }
+    }
+}
+
+/// A compact list inside a summary panel.
+pub fn panel_list(children: Markup) -> Markup {
+    html! { ul class="space-y-1.5 text-sm text-ink" { (children) } }
+}
+
+/// One row in a `panel_list`: primary content left, optional muted detail right.
+pub fn panel_list_item(primary: Markup, detail: Markup) -> Markup {
+    html! {
+        li class="flex items-baseline justify-between gap-3" {
+            span { (primary) }
+            span class="text-xs text-muted whitespace-nowrap" { (detail) }
+        }
+    }
+}
+
+/// Small muted inline text.
+pub fn muted(text: impl Render) -> Markup {
+    html! { span class="text-xs text-muted" { (text) } }
+}
+
+/// A warning-toned badge (e.g. an abnormal lab flag, an overdue item).
+pub fn badge_warn(text: impl Render) -> Markup {
+    html! { span class={(BADGE_BASE) " bg-amber-100 text-amber-800"} { (text) } }
+}
+
 // ---------------------------------------------------------------------------
 // Badges
 // ---------------------------------------------------------------------------

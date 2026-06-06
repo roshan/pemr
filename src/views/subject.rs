@@ -1,6 +1,8 @@
 use maud::{Markup, html};
 
-use crate::models::Subject;
+use crate::models::{
+    Allergy, Appointment, CareTeamMember, Condition, Immunization, Medication, Subject, VitalRow,
+};
 use crate::views::components as c;
 use crate::views::dashboard::{self, DashboardData};
 use crate::views::layout::{Nav, shell};
@@ -54,14 +56,153 @@ pub fn list_page(nav: &Nav<'_>, subjects: &[Subject], counts: &[(uuid::Uuid, i64
     shell(nav, body)
 }
 
-/// `/subjects/{id}` — combined bio header + dashboard view.
-pub fn dashboard_page(nav: &Nav<'_>, subject: &Subject, data: &DashboardData<'_>) -> Markup {
+/// `/subjects/{id}` — the subject CHART: bio header, a clinical summary
+/// (problems / meds / allergies / vitals / immunizations / appointments / care
+/// team), then the incident + record timeline below.
+pub fn dashboard_page(
+    nav: &Nav<'_>,
+    subject: &Subject,
+    summary: &ClinicalSummary,
+    data: &DashboardData<'_>,
+) -> Markup {
     let inner = dashboard::body(nav, data);
     let body = html! {
         (bio_header(subject))
+        (clinical_summary(summary))
         (inner)
     };
     shell(nav, body)
+}
+
+/// Clinical data surfaced on the subject chart. Owned Vecs, built by the handler.
+pub struct ClinicalSummary {
+    pub no_known_allergies: bool,
+    pub allergies: Vec<Allergy>,
+    pub medications: Vec<Medication>,
+    pub conditions: Vec<Condition>,
+    pub immunizations: Vec<Immunization>,
+    pub vitals: Vec<VitalRow>,
+    pub upcoming_appts: Vec<Appointment>,
+    pub care_team: Vec<CareTeamMember>,
+}
+
+fn fmt_num(n: f64) -> String {
+    if n.fract() == 0.0 { format!("{}", n as i64) } else { format!("{n}") }
+}
+
+fn clinical_summary(cs: &ClinicalSummary) -> Markup {
+    html! {
+        section class="mb-6" {
+            (c::section_heading("Clinical summary"))
+            (c::card_grid(html! {
+                (c::summary_panel("Problems", if cs.conditions.is_empty() {
+                    c::empty_state("No active problems")
+                } else {
+                    c::panel_list(html! {
+                        @for x in &cs.conditions {
+                            (c::panel_list_item(
+                                html! { (x.name) },
+                                html! { @if let Some(d) = x.onset_date { "since " (d) } },
+                            ))
+                        }
+                    })
+                }))
+                (c::summary_panel("Medications", if cs.medications.is_empty() {
+                    c::empty_state("No active medications")
+                } else {
+                    c::panel_list(html! {
+                        @for m in &cs.medications {
+                            (c::panel_list_item(
+                                html! { (m.name) },
+                                html! {
+                                    @if let Some(dose) = &m.dose { (dose) }
+                                    @if let Some(freq) = &m.frequency { " · " (freq) }
+                                },
+                            ))
+                        }
+                    })
+                }))
+                (c::summary_panel("Allergies", if cs.allergies.is_empty() {
+                    if cs.no_known_allergies {
+                        c::empty_state("No known allergies (asserted)")
+                    } else {
+                        c::empty_state("No allergies recorded")
+                    }
+                } else {
+                    c::panel_list(html! {
+                        @for a in &cs.allergies {
+                            (c::panel_list_item(
+                                html! { (a.substance) },
+                                html! { @if let Some(sev) = &a.severity { (sev) } },
+                            ))
+                        }
+                    })
+                }))
+                (c::summary_panel("Recent vitals & labs", if cs.vitals.is_empty() {
+                    c::empty_state("No vitals or labs recorded")
+                } else {
+                    c::panel_list(html! {
+                        @for v in &cs.vitals {
+                            @let val = v.value_num.map(fmt_num)
+                                .or_else(|| v.value_text.clone())
+                                .unwrap_or_else(|| "—".into());
+                            (c::panel_list_item(
+                                html! {
+                                    (v.display)
+                                    @if let Some(f) = &v.abnormal_flag {
+                                        @if f != "normal" { " " (c::badge_warn(f)) }
+                                    }
+                                },
+                                html! {
+                                    (val) @if let Some(u) = &v.unit { " " (u) }
+                                    " · " (v.effective_on)
+                                },
+                            ))
+                        }
+                    })
+                }))
+                (c::summary_panel("Immunizations", if cs.immunizations.is_empty() {
+                    c::empty_state("No immunizations recorded")
+                } else {
+                    c::panel_list(html! {
+                        @for im in &cs.immunizations {
+                            (c::panel_list_item(
+                                html! { (im.vaccine) },
+                                html! { @if let Some(d) = im.occurred_at { (d) } },
+                            ))
+                        }
+                    })
+                }))
+                (c::summary_panel("Upcoming appointments", if cs.upcoming_appts.is_empty() {
+                    c::empty_state("None scheduled")
+                } else {
+                    c::panel_list(html! {
+                        @for ap in &cs.upcoming_appts {
+                            (c::panel_list_item(
+                                html! { (ap.title) },
+                                html! { (ap.starts_at.date()) },
+                            ))
+                        }
+                    })
+                }))
+                (c::summary_panel("Care team", if cs.care_team.is_empty() {
+                    c::empty_state("No care team recorded")
+                } else {
+                    c::panel_list(html! {
+                        @for m in &cs.care_team {
+                            (c::panel_list_item(
+                                html! {
+                                    (m.full_name)
+                                    @if let Some(sp) = &m.specialty { " " (c::muted(sp)) }
+                                },
+                                html! { (m.role) },
+                            ))
+                        }
+                    })
+                }))
+            }))
+        }
+    }
 }
 
 fn bio_header(subject: &Subject) -> Markup {

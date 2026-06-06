@@ -103,6 +103,26 @@ pub struct ApiKey {
     pub revoked_at: Option<OffsetDateTime>,
 }
 
+/// One recent observation, for the subject chart's vitals panel. `value_num`
+/// must be projected `::float8` (numeric → f64) by the query.
+#[derive(Debug, FromRow)]
+pub struct VitalRow {
+    pub display: String,
+    pub value_num: Option<f64>,
+    pub value_text: Option<String>,
+    pub unit: Option<String>,
+    pub effective_on: Date,
+    pub abnormal_flag: Option<String>,
+}
+
+/// A care-team member joined for the subject chart (subject_providers → providers).
+#[derive(Debug, FromRow)]
+pub struct CareTeamMember {
+    pub role: String,
+    pub full_name: String,
+    pub specialty: Option<String>,
+}
+
 pub const RECORD_KINDS: &[&str] = &[
     "xray", "mri", "ct", "ultrasound", "report", "lab", "note", "prescription", "photo", "document", "other",
 ];

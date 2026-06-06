@@ -6,7 +6,10 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::handlers::{AppState, load_subjects};
-use crate::models::{Incident, Record, Subject, empty_to_none, parse_date};
+use crate::models::{
+    Allergy, Appointment, CareTeamMember, Condition, Immunization, Incident, Medication, Record,
+    Subject, VitalRow, empty_to_none, parse_date,
+};
 use crate::viewer::ViewerContext;
 use crate::views::layout::Nav;
 use crate::views::subject;
@@ -145,6 +148,70 @@ pub async fn detail(
     .fetch_all(&state.pool)
     .await?;
 
+    // Clinical summary for the chart (reads the Phase 1/2 tables).
+    let allergies = sqlx::query_as::<_, Allergy>(
+        "select * from allergies where subject_id = $1 and status <> 'entered_in_error'
+          order by created_at desc",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    let medications = sqlx::query_as::<_, Medication>(
+        "select * from medications where subject_id = $1 and status = 'active'
+          order by created_at desc",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    let conditions = sqlx::query_as::<_, Condition>(
+        "select * from conditions where subject_id = $1 and status = 'active'
+          order by onset_date desc nulls last, created_at desc",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    let immunizations = sqlx::query_as::<_, Immunization>(
+        "select * from immunizations where subject_id = $1
+          order by occurred_at desc nulls last, created_at desc limit 12",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    let vitals = sqlx::query_as::<_, VitalRow>(
+        "select display, value_num::float8 as value_num, value_text, unit, effective_on, abnormal_flag
+           from observations where subject_id = $1
+          order by effective_on desc, created_at desc limit 8",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    let upcoming_appts = sqlx::query_as::<_, Appointment>(
+        "select * from appointments where subject_id = $1 and starts_at >= now()
+          order by starts_at asc limit 6",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    let care_team = sqlx::query_as::<_, CareTeamMember>(
+        "select sp.role, p.full_name, p.specialty
+           from subject_providers sp join providers p on p.id = sp.provider_id
+          where sp.subject_id = $1 and sp.active
+          order by p.full_name",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    let summary = subject::ClinicalSummary {
+        no_known_allergies: s.no_known_allergies,
+        allergies,
+        medications,
+        conditions,
+        immunizations,
+        vitals,
+        upcoming_appts,
+        care_team,
+    };
+
     let nav = Nav {
         title: &s.full_name,
         current_path: "/",
@@ -159,7 +226,7 @@ pub async fn detail(
         recent_incidents: &recent_incidents,
         recent_records: &recent_records,
     };
-    Ok(subject::dashboard_page(&nav, &s, &data))
+    Ok(subject::dashboard_page(&nav, &s, &summary, &data))
 }
 
 pub async fn edit_form(
