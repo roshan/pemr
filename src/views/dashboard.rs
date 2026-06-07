@@ -25,7 +25,11 @@ pub struct TimelineBucket {
 
 /// Everything the timeline view needs, prepared by the handler.
 pub struct TimelineData {
-    pub range: String, // 3m | 1y | 5y | all (zoom level)
+    pub range: String,             // active preset for tab highlight ("" if custom window)
+    pub start: String,             // current window (ISO) — date boxes + zoom anchor
+    pub end: String,
+    pub min: String, // data bounds (ISO) — clamp zoom
+    pub max: String,
     pub ticks: Vec<(f64, String)>, // month/year axis labels at their pct
     pub buckets: Vec<TimelineBucket>,
     pub subject: Option<Uuid>,
@@ -245,6 +249,10 @@ pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) ->
                 (c::timeline_tab(rurl("1y"), "1Y", data.range == "1y"))
                 (c::timeline_tab(rurl("5y"), "5Y", data.range == "5y"))
                 (c::timeline_tab(rurl("all"), "All", data.range == "all"))
+                span class="text-muted px-1" { "·" }
+                (c::timeline_date_input("from", &data.start))
+                span class="text-muted" { "–" }
+                (c::timeline_date_input("to", &data.end))
             }
         }
         div class="flex flex-wrap gap-3 mb-2" {
@@ -274,23 +282,40 @@ pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) ->
     }
 }
 
-/// Scroll-wheel zoom: wheel up steps to a narrower window, wheel down to a wider
-/// one (the same levels as the tabs). The only first-party JS in the app — wheel
-/// direction can't be read in CSS/htmx. It reads the current level + base URL
-/// off `#tl-zoom` and navigates; if already at an end it lets the page scroll.
+/// Scroll-wheel zoom, centred on the cursor: the date under the pointer stays
+/// put while the window shrinks (wheel up) or grows (wheel down) by ~40% a tick.
+/// The only first-party JS in the app — wheel direction + cursor position can't
+/// be read in CSS/htmx. Reads the window + data bounds off `#tl-zoom` and
+/// navigates to an explicit `from`/`to`; at the fully-zoomed-out end it lets the
+/// page scroll. Also wires the from/to date boxes.
 const WHEEL_ZOOM_JS: &str = r#"
 (function(){
   var z=document.getElementById('tl-zoom'); if(!z) return;
-  var order=['3m','1y','5y','all'], going=false;
+  var DAY=86400000, base=z.dataset.base;
+  function ms(s){ return Date.parse(s); }
+  function iso(m){ return new Date(m).toISOString().slice(0,10); }
+  function go(a,b){ location.href = base + (base.indexOf('?')>=0?'&':'?') + 'from='+a+'&to='+b; }
   z.addEventListener('wheel', function(e){
-    if(going) return;
-    var i=order.indexOf(z.getAttribute('data-range')); if(i<0) i=1;
-    var ni = e.deltaY<0 ? i-1 : i+1;
-    if(ni<0 || ni>=order.length) return;        // at an end: let the page scroll
-    e.preventDefault(); going=true;
-    var b=z.getAttribute('data-base');
-    location.href = b + (b.indexOf('?')>=0?'&':'?') + 'range=' + order[ni];
+    var s=ms(z.dataset.start), en=ms(z.dataset.end), mn=ms(z.dataset.min), mx=ms(z.dataset.max);
+    if(isNaN(s)||isNaN(en)) return;
+    var span=en-s, full=Math.max(DAY, mx-mn);
+    if(e.deltaY>0 && span>=full) return;                      // fully out: page scrolls
+    var band=z.querySelector('[data-tl-band]')||z, r=band.getBoundingClientRect();
+    var tf=Math.min(1, Math.max(0, ((e.clientX-r.left)/Math.max(1,r.width)-0.04)/0.92));
+    var focal=s+tf*span;
+    var ns=e.deltaY<0 ? span*0.6 : span/0.6;
+    ns=Math.min(full, Math.max(21*DAY, ns));
+    e.preventDefault();
+    var a,b;
+    if(ns>=full){ a=mn; b=mx; }
+    else { a=Math.round(focal-tf*ns); b=a+ns;
+           if(a<mn){a=mn;b=mn+ns;} if(b>mx){b=mx;a=mx-ns;} }
+    go(iso(a), iso(b));
   }, {passive:false});
+  var f=z.querySelector('input[name=from]'), t=z.querySelector('input[name=to]');
+  function chg(){ if(f&&t&&f.value&&t.value) go(f.value, t.value); }
+  if(f) f.addEventListener('change', chg);
+  if(t) t.addEventListener('change', chg);
 })();
 "#;
 
@@ -301,7 +326,8 @@ pub fn visual_timeline(nav: &Nav<'_>, data: &TimelineData, subjects: &[Subject])
     };
     let body = html! {
         (c::page_title("Timeline"))
-        div id="tl-zoom" data-range=(data.range) data-base=(base) {
+        div id="tl-zoom" data-base=(base)
+            data-start=(data.start) data-end=(data.end) data-min=(data.min) data-max=(data.max) {
             (timeline_widget(data, subjects, true))
         }
         script { (PreEscaped(WHEEL_ZOOM_JS)) }
