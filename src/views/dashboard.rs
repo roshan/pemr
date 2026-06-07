@@ -1,4 +1,4 @@
-use maud::{Markup, html};
+use maud::{Markup, PreEscaped, html};
 use time::Date;
 use uuid::Uuid;
 
@@ -274,10 +274,37 @@ pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) ->
     }
 }
 
+/// Scroll-wheel zoom: wheel up steps to a narrower window, wheel down to a wider
+/// one (the same levels as the tabs). The only first-party JS in the app — wheel
+/// direction can't be read in CSS/htmx. It reads the current level + base URL
+/// off `#tl-zoom` and navigates; if already at an end it lets the page scroll.
+const WHEEL_ZOOM_JS: &str = r#"
+(function(){
+  var z=document.getElementById('tl-zoom'); if(!z) return;
+  var order=['3m','1y','5y','all'], going=false;
+  z.addEventListener('wheel', function(e){
+    if(going) return;
+    var i=order.indexOf(z.getAttribute('data-range')); if(i<0) i=1;
+    var ni = e.deltaY<0 ? i-1 : i+1;
+    if(ni<0 || ni>=order.length) return;        // at an end: let the page scroll
+    e.preventDefault(); going=true;
+    var b=z.getAttribute('data-base');
+    location.href = b + (b.indexOf('?')>=0?'&':'?') + 'range=' + order[ni];
+  }, {passive:false});
+})();
+"#;
+
 pub fn visual_timeline(nav: &Nav<'_>, data: &TimelineData, subjects: &[Subject]) -> Markup {
+    let base = match data.subject {
+        Some(id) => format!("/timeline?subject={id}"),
+        None => "/timeline".to_string(),
+    };
     let body = html! {
         (c::page_title("Timeline"))
-        (timeline_widget(data, subjects, true))
+        div id="tl-zoom" data-range=(data.range) data-base=(base) {
+            (timeline_widget(data, subjects, true))
+        }
+        script { (PreEscaped(WHEEL_ZOOM_JS)) }
     };
     shell(nav, body)
 }
