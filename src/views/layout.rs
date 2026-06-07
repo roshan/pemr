@@ -1,8 +1,24 @@
+use std::sync::OnceLock;
+
 use maud::{DOCTYPE, Markup, html};
 use uuid::Uuid;
 
 use crate::models::Subject;
 use crate::viewer::ViewerContext;
+
+/// First 12 hex of a vendored asset's sha256 — a content version for cache
+/// busting. The bytes are embedded at compile time so the hash always matches
+/// what ships, and it's computed once. Appending `?v=<hash>` makes the browser
+/// fetch a fresh copy whenever the asset's content changes (no manual refresh,
+/// no stale CSS after a deploy).
+fn css_ver() -> &'static str {
+    static V: OnceLock<String> = OnceLock::new();
+    V.get_or_init(|| crate::api_auth::sha256_hex(include_bytes!("../../static/vendor/app.css"))[..12].to_string())
+}
+fn htmx_ver() -> &'static str {
+    static V: OnceLock<String> = OnceLock::new();
+    V.get_or_init(|| crate::api_auth::sha256_hex(include_bytes!("../../static/vendor/htmx.min.js"))[..12].to_string())
+}
 
 pub struct Nav<'a> {
     pub title: &'a str,
@@ -20,8 +36,8 @@ pub fn shell(nav: &Nav<'_>, body: Markup) -> Markup {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (nav.title) " — personal EMR" }
-                link rel="stylesheet" href="/static/vendor/app.css";
-                script src="/static/vendor/htmx.min.js" defer {}
+                link rel="stylesheet" href={ "/static/vendor/app.css?v=" (css_ver()) };
+                script src={ "/static/vendor/htmx.min.js?v=" (htmx_ver()) } defer {}
             }
             body class="min-h-screen text-ink antialiased" {
                 (top_bar(nav))
