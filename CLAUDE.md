@@ -176,6 +176,7 @@ Structured clinical exports (allergies, meds, problems, immunizations, labs, vit
 - Every mutating handler returns server-rendered HTML, not JSON. Successful POST/PUT/DELETE returns the new partial that HTMX swaps in; failed POST returns the form re-rendered with inline error markup and a 4xx status (HTMX swaps it via `hx-target` on the form).
 - The set of HTMX attributes we use is intentionally small: `hx-get`, `hx-post`, `hx-delete`, `hx-target`, `hx-swap`, `hx-trigger`. If you find yourself reaching for `hx-vals`, `hx-include`, or out-of-band swaps, pause and reconsider — the route shape is probably wrong.
 - No JSON-emitting endpoints unless an explicit non-browser caller is named in the PR.
+- **One first-party JS exception:** the `/timeline` page carries a ~12-line inline `<script>` (`WHEEL_ZOOM_JS` in `views/dashboard.rs`) for scroll-wheel zoom — wheel *direction* can't be read in CSS or htmx. It reads the current zoom level + base URL off the `#tl-zoom` wrapper and navigates to the adjacent `range`. Keep custom JS to this kind of last-resort, no-dependency, no-build snippet; reach for htmx first.
 
 ## Component rules (Tailwind + maud)
 
