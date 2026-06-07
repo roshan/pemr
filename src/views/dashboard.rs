@@ -245,14 +245,18 @@ pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) ->
     html! {
         @if tabs {
             div class="flex flex-wrap items-center gap-2 mb-3" {
-                (c::timeline_tab(rurl("3m"), "3M", data.range == "3m"))
-                (c::timeline_tab(rurl("1y"), "1Y", data.range == "1y"))
-                (c::timeline_tab(rurl("5y"), "5Y", data.range == "5y"))
-                (c::timeline_tab(rurl("all"), "All", data.range == "all"))
+                (c::timeline_tab(&rurl("3m"), "3M", data.range == "3m"))
+                (c::timeline_tab(&rurl("1y"), "1Y", data.range == "1y"))
+                (c::timeline_tab(&rurl("5y"), "5Y", data.range == "5y"))
+                (c::timeline_tab(&rurl("all"), "All", data.range == "all"))
                 span class="text-muted px-1" { "·" }
-                (c::timeline_date_input("from", &data.start))
-                span class="text-muted" { "–" }
-                (c::timeline_date_input("to", &data.end))
+                form hx-get="/timeline" hx-target="#tl-inner" hx-swap="outerHTML"
+                     hx-trigger="change" class="flex items-center gap-1" {
+                    @if let Some(id) = data.subject { input type="hidden" name="subject" value=(id); }
+                    (c::timeline_date_input("from", &data.start))
+                    span class="text-muted" { "–" }
+                    (c::timeline_date_input("to", &data.end))
+                }
             }
         }
         div class="flex flex-wrap gap-3 mb-2" {
@@ -290,34 +294,45 @@ pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) ->
 /// page scroll. Also wires the from/to date boxes.
 const WHEEL_ZOOM_JS: &str = r#"
 (function(){
-  var z=document.getElementById('tl-zoom'); if(!z) return;
-  var DAY=86400000, base=z.dataset.base;
+  var z=document.getElementById('tl-zoom'); if(!z||!window.htmx) return;
+  var DAY=86400000, base=z.dataset.base, busy=false;
   function ms(s){ return Date.parse(s); }
   function iso(m){ return new Date(m).toISOString().slice(0,10); }
-  function go(a,b){ location.href = base + (base.indexOf('?')>=0?'&':'?') + 'from='+a+'&to='+b; }
+  z.addEventListener('htmx:afterSettle', function(){ busy=false; });
   z.addEventListener('wheel', function(e){
-    var s=ms(z.dataset.start), en=ms(z.dataset.end), mn=ms(z.dataset.min), mx=ms(z.dataset.max);
+    var inner=document.getElementById('tl-inner'), band=z.querySelector('[data-tl-band]');
+    if(!inner||!band) return;
+    var br=band.getBoundingClientRect();
+    if(e.clientY < br.top-28 || e.clientY > br.bottom+28) return;   // not over the strip: page scrolls
+    var s=ms(inner.dataset.start), en=ms(inner.dataset.end), mn=ms(z.dataset.min), mx=ms(z.dataset.max);
     if(isNaN(s)||isNaN(en)) return;
     var span=en-s, full=Math.max(DAY, mx-mn);
-    if(e.deltaY>0 && span>=full) return;                      // fully out: page scrolls
-    var band=z.querySelector('[data-tl-band]')||z, r=band.getBoundingClientRect();
-    var tf=Math.min(1, Math.max(0, ((e.clientX-r.left)/Math.max(1,r.width)-0.04)/0.92));
+    if(e.deltaY>0 && span>=full) return;                           // fully out: page scrolls
+    e.preventDefault();
+    if(busy) return; busy=true; setTimeout(function(){busy=false;},400);
+    var tf=Math.min(1, Math.max(0, ((e.clientX-br.left)/Math.max(1,br.width)-0.04)/0.92));
     var focal=s+tf*span;
     var ns=e.deltaY<0 ? span*0.6 : span/0.6;
     ns=Math.min(full, Math.max(21*DAY, ns));
-    e.preventDefault();
     var a,b;
     if(ns>=full){ a=mn; b=mx; }
     else { a=Math.round(focal-tf*ns); b=a+ns;
            if(a<mn){a=mn;b=mn+ns;} if(b>mx){b=mx;a=mx-ns;} }
-    go(iso(a), iso(b));
+    var url=base+(base.indexOf('?')>=0?'&':'?')+'from='+iso(a)+'&to='+iso(b);
+    window.htmx.ajax('GET', url, {target:'#tl-inner', swap:'outerHTML'});
   }, {passive:false});
-  var f=z.querySelector('input[name=from]'), t=z.querySelector('input[name=to]');
-  function chg(){ if(f&&t&&f.value&&t.value) go(f.value, t.value); }
-  if(f) f.addEventListener('change', chg);
-  if(t) t.addEventListener('change', chg);
 })();
 "#;
+
+/// The swappable inner band (htmx target `#tl-inner`). Carries the current
+/// window so the zoom script can read it after each in-place swap.
+pub fn timeline_inner(data: &TimelineData, subjects: &[Subject]) -> Markup {
+    html! {
+        div id="tl-inner" data-start=(data.start) data-end=(data.end) {
+            (timeline_widget(data, subjects, true))
+        }
+    }
+}
 
 pub fn visual_timeline(nav: &Nav<'_>, data: &TimelineData, subjects: &[Subject]) -> Markup {
     let base = match data.subject {
@@ -326,9 +341,8 @@ pub fn visual_timeline(nav: &Nav<'_>, data: &TimelineData, subjects: &[Subject])
     };
     let body = html! {
         (c::page_title("Timeline"))
-        div id="tl-zoom" data-base=(base)
-            data-start=(data.start) data-end=(data.end) data-min=(data.min) data-max=(data.max) {
-            (timeline_widget(data, subjects, true))
+        div id="tl-zoom" data-base=(base) data-min=(data.min) data-max=(data.max) {
+            (timeline_inner(data, subjects))
         }
         script { (PreEscaped(WHEEL_ZOOM_JS)) }
     };
