@@ -461,14 +461,17 @@ pub fn timeline_date_input(name: &str, value: &str) -> Markup {
     }
 }
 
-/// Duration-selector tab (a plain link; the page re-renders for the window).
-pub fn timeline_tab(href: impl Render, label: impl Render, active: bool) -> Markup {
+/// Duration-selector tab: htmx-swaps the inner band in place; the `href` is a
+/// no-JS fallback (full page load).
+pub fn timeline_tab(href: &str, label: impl Render, active: bool) -> Markup {
     let cls = if active {
         "rounded-md bg-brand px-3 py-1 text-sm font-medium text-white"
     } else {
         "rounded-md border border-line px-3 py-1 text-sm text-muted hover:bg-brand-soft hover:text-brand-ink"
     };
-    html! { a href=(href) class=(cls) { (label) } }
+    html! {
+        a href=(href) hx-get=(href) hx-target="#tl-inner" hx-swap="outerHTML" class=(cls) { (label) }
+    }
 }
 
 /// Legend entry: dot + kind name.

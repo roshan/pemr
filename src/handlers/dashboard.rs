@@ -1,4 +1,5 @@
 use axum::extract::{Path, Query, State};
+use axum::http::HeaderMap;
 use uuid::Uuid;
 use maud::Markup;
 use serde::Deserialize;
@@ -70,34 +71,48 @@ pub struct TimelineQuery {
 pub async fn timeline_page(
     State(state): State<AppState>,
     viewer: ViewerContext,
+    headers: HeaderMap,
     Query(q): Query<TimelineQuery>,
 ) -> AppResult<Markup> {
     let subject =
         parse_subject_filter(q.subject.as_deref()).map_err(AppError::BadRequest)?;
-    timeline_render(&state, viewer, subject, q.range.as_deref(), q.from.as_deref(), q.to.as_deref())
-        .await
+    timeline_render(&state, viewer, subject, &q, is_hx(&headers)).await
 }
 
 pub async fn timeline_for_subject(
     State(state): State<AppState>,
     viewer: ViewerContext,
+    headers: HeaderMap,
     Path(subject_id): Path<Uuid>,
     Query(q): Query<TimelineQuery>,
 ) -> AppResult<Markup> {
-    timeline_render(&state, viewer, Some(subject_id), q.range.as_deref(), q.from.as_deref(), q.to.as_deref())
-        .await
+    timeline_render(&state, viewer, Some(subject_id), &q, is_hx(&headers)).await
+}
+
+fn is_hx(headers: &HeaderMap) -> bool {
+    headers.contains_key("hx-request")
 }
 
 async fn timeline_render(
     state: &AppState,
     viewer: ViewerContext,
     subject: Option<Uuid>,
-    range: Option<&str>,
-    from: Option<&str>,
-    to: Option<&str>,
+    q: &TimelineQuery,
+    hx: bool,
 ) -> AppResult<Markup> {
     let subjects = load_subjects(&state.pool).await?;
-    let data = load_timeline(&state.pool, subject, range.unwrap_or("1y"), from, to).await?;
+    let data = load_timeline(
+        &state.pool,
+        subject,
+        q.range.as_deref().unwrap_or("1y"),
+        q.from.as_deref(),
+        q.to.as_deref(),
+    )
+    .await?;
+    // htmx zoom/window requests swap just the inner band; full loads get the page.
+    if hx {
+        return Ok(dashboard::timeline_inner(&data, &subjects));
+    }
     let nav = Nav {
         title: "Timeline",
         current_path: "/timeline",
