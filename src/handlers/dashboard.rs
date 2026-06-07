@@ -4,7 +4,7 @@ use maud::Markup;
 use serde::Deserialize;
 use sqlx::PgPool;
 
-use time::Date;
+use time::{Date, Month};
 
 use crate::error::{AppError, AppResult};
 use crate::handlers::{AppState, load_subjects};
@@ -89,7 +89,7 @@ async fn timeline_render(
     range: Option<&str>,
 ) -> AppResult<Markup> {
     let subjects = load_subjects(&state.pool).await?;
-    let data = load_timeline(&state.pool, subject, range.unwrap_or("all")).await?;
+    let data = load_timeline(&state.pool, subject, range.unwrap_or("1y")).await?;
     let nav = Nav {
         title: "Timeline",
         current_path: "/timeline",
@@ -148,60 +148,107 @@ pub async fn load_timeline(
     Ok(build_timeline_data(events, range, subject))
 }
 
-/// Window, group, and lay out events. Dots are spaced **evenly** (by index, not
-/// calendar position) so a lone outlier — a 2013 record amid 2025 data — can't
-/// stretch the axis and push everything off-screen; the real date rides along in
-/// each marker's label and popover.
+/// Window + group events **time-proportionally** so gaps reflect real time and
+/// clusters read as dense. The zoom level sets both the window (anchored on the
+/// latest event) and the bucket granularity, so dots stay legible without
+/// overlap as you zoom out. Positions are percentages — the view fits the band
+/// to its width, so there's no dead scroll space.
 fn build_timeline_data(
     mut events: Vec<dashboard::TimelineEvent>,
     range: &str,
     subject: Option<Uuid>,
 ) -> dashboard::TimelineData {
     let range = match range {
-        "1y" | "3y" | "5y" | "all" => range,
-        _ => "all",
+        "3m" | "1y" | "5y" | "all" => range,
+        _ => "1y",
     }
     .to_string();
     events.sort_by_key(|e| e.date);
     if events.is_empty() {
-        return dashboard::TimelineData { range, width_px: 1000, buckets: vec![], subject };
+        return dashboard::TimelineData { range, ticks: vec![], buckets: vec![], subject };
     }
 
-    // Window anchored on the data (not "today"): the latest event is the right
-    // edge; the duration trims older events off the left.
     let min_d = events.first().unwrap().date;
     let end = events.last().unwrap().date;
-    let years: Option<i64> = match range.as_str() {
-        "1y" => Some(1),
-        "3y" => Some(3),
-        "5y" => Some(5),
-        _ => None,
+    let window_days: Option<i64> = match range.as_str() {
+        "3m" => Some(91),
+        "1y" => Some(365),
+        "5y" => Some(1826),
+        _ => None, // all
     };
-    let start = years
-        .and_then(|y| end.checked_sub(time::Duration::days(365 * y)))
+    let start = window_days
+        .and_then(|d| end.checked_sub(time::Duration::days(d)))
         .filter(|s| *s > min_d)
         .unwrap_or(min_d);
 
+    // Coarser buckets as the window widens, so dots don't pile up.
+    let bucket = |d: Date| -> Date {
+        match range.as_str() {
+            "3m" | "1y" => d, // day
+            "5y" => d
+                .checked_sub(time::Duration::days(d.weekday().number_days_from_monday() as i64))
+                .unwrap_or(d), // week (Monday)
+            _ => Date::from_calendar_date(d.year(), d.month(), 1).unwrap_or(d), // month
+        }
+    };
+
+    let span = (end - start).whole_days().max(1) as f64;
     let mut buckets: Vec<dashboard::TimelineBucket> = Vec::new();
     for e in events.into_iter().filter(|e| e.date >= start) {
+        let anchor = bucket(e.date);
         match buckets.last_mut() {
-            Some(b) if b.date == e.date => b.events.push(e),
+            Some(b) if b.date == anchor => b.events.push(e),
             _ => buckets.push(dashboard::TimelineBucket {
                 pct: 0.0,
-                date: e.date,
+                date: anchor,
                 kind: String::new(),
                 events: vec![e],
             }),
         }
     }
-    let n = buckets.len();
-    for (i, b) in buckets.iter_mut().enumerate() {
-        b.pct = if n <= 1 { 50.0 } else { 3.0 + i as f64 / (n - 1) as f64 * 94.0 };
+    for b in &mut buckets {
+        b.pct = 4.0 + (b.date - start).whole_days() as f64 / span * 92.0;
         b.kind = primary_kind(&b.events);
     }
-    let width_px = (n as f64 * 64.0).clamp(1000.0, 6000.0) as i64;
 
-    dashboard::TimelineData { range, width_px, buckets, subject }
+    dashboard::TimelineData { range, ticks: timeline_ticks(start, end), buckets, subject }
+}
+
+fn month3(m: Month) -> &'static str {
+    [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ][m as usize - 1]
+}
+
+/// Month/year axis labels, spaced so they don't collide: monthly for short
+/// windows, quarterly mid, yearly when zoomed out.
+fn timeline_ticks(start: Date, end: Date) -> Vec<(f64, String)> {
+    let span = (end - start).whole_days().max(1) as f64;
+    let pct = |d: Date| 4.0 + (d - start).whole_days() as f64 / span * 92.0;
+    let step: i32 = if span <= 400.0 {
+        1
+    } else if span <= 1200.0 {
+        3
+    } else {
+        12
+    };
+    let mut out = Vec::new();
+    let mut idx = start.year() * 12 + (start.month() as i32 - 1); // months since year 0
+    let end_idx = end.year() * 12 + (end.month() as i32 - 1);
+    while idx <= end_idx {
+        let (y, m) = (idx.div_euclid(12), Month::try_from(idx.rem_euclid(12) as u8 + 1).unwrap());
+        let d = Date::from_calendar_date(y, m, 1).unwrap();
+        if d >= start {
+            let label = if step >= 12 {
+                y.to_string()
+            } else {
+                format!("{} '{:02}", month3(m), y.rem_euclid(100))
+            };
+            out.push((pct(d), label));
+        }
+        idx += step;
+    }
+    out
 }
 
 /// The dot colour follows the highest-priority kind present in the bucket.

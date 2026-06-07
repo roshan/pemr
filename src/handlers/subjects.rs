@@ -149,7 +149,7 @@ pub async fn detail(
     .await?;
 
     let summary = clinical_summary_for(&state.pool, &s).await?;
-    let timeline = crate::handlers::dashboard::load_timeline(&state.pool, Some(id), "all").await?;
+    let timeline = crate::handlers::dashboard::load_timeline(&state.pool, Some(id), "1y").await?;
 
     let nav = Nav {
         title: &s.full_name,

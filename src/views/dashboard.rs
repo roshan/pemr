@@ -25,8 +25,8 @@ pub struct TimelineBucket {
 
 /// Everything the timeline view needs, prepared by the handler.
 pub struct TimelineData {
-    pub range: String, // 1y | 3y | 5y | all
-    pub width_px: i64,
+    pub range: String, // 3m | 1y | 5y | all (zoom level)
+    pub ticks: Vec<(f64, String)>, // month/year axis labels at their pct
     pub buckets: Vec<TimelineBucket>,
     pub subject: Option<Uuid>,
 }
@@ -227,11 +227,6 @@ fn incidents_timeline(
     }
 }
 
-/// Compact "M/D/YY" for a dot's label (full date is in the popover header).
-fn short_date(d: Date) -> String {
-    format!("{}/{}/{:02}", d.month() as u8, d.day(), (d.year() % 100).abs())
-}
-
 const TIMELINE_KINDS: [&str; 6] =
     ["incident", "record", "condition", "immunization", "observation", "appointment"];
 
@@ -246,21 +241,22 @@ pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) ->
     html! {
         @if tabs {
             div class="flex flex-wrap items-center gap-2 mb-3" {
+                (c::timeline_tab(rurl("3m"), "3M", data.range == "3m"))
                 (c::timeline_tab(rurl("1y"), "1Y", data.range == "1y"))
-                (c::timeline_tab(rurl("3y"), "3Y", data.range == "3y"))
                 (c::timeline_tab(rurl("5y"), "5Y", data.range == "5y"))
                 (c::timeline_tab(rurl("all"), "All", data.range == "all"))
             }
         }
-        div class="flex flex-wrap gap-3 mb-3" {
+        div class="flex flex-wrap gap-3 mb-2" {
             @for k in TIMELINE_KINDS { (c::timeline_legend_item(k)) }
         }
         @if data.buckets.is_empty() {
-            (c::empty_state("No dated events in this window."))
+            (c::empty_state("No events in this window — zoom out for more history."))
         } @else {
-            (c::timeline_scroll(data.width_px, html! {
+            (c::timeline_band(html! {
+                @for (pct, label) in &data.ticks { (c::timeline_tick(*pct, label)) }
                 @for b in &data.buckets {
-                    (c::timeline_marker(b.pct, &b.kind, b.events.len(), short_date(b.date),
+                    (c::timeline_marker(b.pct, &b.kind, b.events.len(),
                         c::timeline_popover(b.date.to_string(), html! {
                             @for e in &b.events {
                                 @let trailing = if data.subject.is_none() {
@@ -274,7 +270,6 @@ pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) ->
                     ))
                 }
             }))
-            p class="text-xs text-muted mt-2" { "Scroll horizontally · hover or focus a dot for that day's events." }
         }
     }
 }
