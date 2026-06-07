@@ -1,8 +1,36 @@
 use maud::{Markup, html};
+use time::Date;
+use uuid::Uuid;
 
 use crate::models::{Incident, Record, Subject, is_image_kind, record_kind_label};
 use crate::views::components as c;
 use crate::views::layout::{Nav, render_date, shell, subject_badge};
+
+/// One dated thing on the timeline (incident, record, condition, …).
+pub struct TimelineEvent {
+    pub date: Date,
+    pub kind: String,
+    pub title: String,
+    pub href: Option<String>,
+    pub subject_id: Uuid,
+}
+
+/// All events on one calendar day, positioned at `pct` along the axis.
+pub struct TimelineBucket {
+    pub pct: f64,
+    pub date: Date,
+    pub kind: String, // dominant kind → dot colour
+    pub events: Vec<TimelineEvent>,
+}
+
+/// Everything the timeline view needs, prepared by the handler.
+pub struct TimelineData {
+    pub range: String, // 1y | 3y | 5y | all
+    pub width_px: i64,
+    pub ticks: Vec<(f64, String)>,
+    pub buckets: Vec<TimelineBucket>,
+    pub subject: Option<Uuid>,
+}
 
 pub struct DashboardData<'a> {
     pub subjects: &'a [Subject],
@@ -200,33 +228,46 @@ fn incidents_timeline(
     }
 }
 
-pub fn full_timeline(nav: &Nav<'_>, incidents: &[Incident], subjects: &[Subject]) -> Markup {
+pub fn visual_timeline(nav: &Nav<'_>, data: &TimelineData, subjects: &[Subject]) -> Markup {
+    let base = match data.subject {
+        Some(id) => format!("/timeline?subject={id}"),
+        None => "/timeline".to_string(),
+    };
+    let rurl = |r: &str| format!("{base}{}range={r}", if base.contains('?') { "&" } else { "?" });
+    let kinds = ["incident", "record", "condition", "immunization", "observation", "appointment"];
+
     let body = html! {
         (c::page_title("Timeline"))
-        @if incidents.is_empty() {
-            (c::empty_state("No incidents yet."))
+        div class="flex flex-wrap items-center gap-2 mb-3" {
+            (c::timeline_tab(rurl("1y"), "1Y", data.range == "1y"))
+            (c::timeline_tab(rurl("3y"), "3Y", data.range == "3y"))
+            (c::timeline_tab(rurl("5y"), "5Y", data.range == "5y"))
+            (c::timeline_tab(rurl("all"), "All", data.range == "all"))
+        }
+        div class="flex flex-wrap gap-3 mb-3" {
+            @for k in kinds { (c::timeline_legend_item(k)) }
+        }
+        @if data.buckets.is_empty() {
+            (c::empty_state("No dated events in this window."))
         } @else {
-            ol class="relative space-y-4 ml-3 border-l border-line pl-6" {
-                @for inc in incidents {
-                    li class="relative" {
-                        span class="absolute timeline-marker-offset top-1.5 w-3 h-3 rounded-full bg-brand ring-2 ring-canvas" {}
-                        a href={ "/incidents/" (inc.id) } class="block group rounded -mx-2 px-2 py-1 hover:bg-brand-soft" {
-                            div class="flex flex-wrap items-baseline gap-2" {
-                                time class="text-xs font-mono text-muted" {
-                                    (render_date(inc.occurred_at, &inc.occurred_precision))
-                                }
-                                span class="text-base font-semibold text-ink group-hover:text-brand" {
-                                    (inc.title)
-                                }
-                                (subject_badge(subjects, inc.subject_id))
+            (c::timeline_scroll(data.width_px, html! {
+                @for (pct, label) in &data.ticks { (c::timeline_tick(*pct, label)) }
+                @for b in &data.buckets {
+                    (c::timeline_marker(b.pct, &b.kind, b.events.len(),
+                        c::timeline_popover(b.date.to_string(), html! {
+                            @for e in &b.events {
+                                @let trailing = if data.subject.is_none() {
+                                    subject_badge(subjects, e.subject_id)
+                                } else {
+                                    html! {}
+                                };
+                                (c::timeline_event_row(&e.kind, &e.title, e.href.as_deref(), trailing))
                             }
-                            @if !inc.narrative.is_empty() {
-                                p class="text-sm text-muted mt-1 line-clamp-2" { (inc.narrative) }
-                            }
-                        }
-                    }
+                        })
+                    ))
                 }
-            }
+            }))
+            p class="text-xs text-muted mt-2" { "Scroll horizontally · hover a dot for that day's events." }
         }
     };
     shell(nav, body)
