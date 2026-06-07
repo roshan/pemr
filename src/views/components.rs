@@ -472,40 +472,31 @@ pub fn timeline_legend_item(kind: &str) -> Markup {
     }
 }
 
-/// Scroll viewport + positioned track. `width_px` widens the track so events
-/// spread out and the viewport scrolls left/right.
-pub fn timeline_scroll(width_px: i64, inner: Markup) -> Markup {
+/// A frameless, full-width band with a faint time axis. Events are positioned
+/// by percentage and fit the width — no box, no dead scroll space. Markers'
+/// popovers overflow the band on hover (it doesn't clip).
+pub fn timeline_band(inner: Markup) -> Markup {
     html! {
-        div class="relative overflow-x-auto rounded-lg border border-line bg-surface" {
-            div class="relative h-64" style={ "width:" (width_px) "px" } {
-                div class="absolute left-0 right-0 top-10 border-t border-line" {}
-                (inner)
-            }
+        div class="relative h-16 w-full" {
+            div class="absolute left-0 right-0 top-6 border-t border-line" {}
+            (inner)
         }
     }
 }
 
-/// A year/month tick: short rule on the axis + label below.
+/// A month/year axis label, placed below the axis at its time position.
 pub fn timeline_tick(left_pct: f64, label: impl Render) -> Markup {
     html! {
-        div class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col items-center"
-            style={ "left:" (format!("{left_pct:.3}")) "%" } {
-            span class="block w-px h-4 bg-line" {}
-            span class="mt-1 text-xs font-mono text-muted whitespace-nowrap" { (label) }
-        }
+        span class="absolute top-9 -translate-x-1/2 text-xs text-muted whitespace-nowrap"
+            style={ "left:" (format!("{left_pct:.3}")) "%" } { (label) }
     }
 }
 
-/// A positioned event marker: coloured dot (sized by count) with a date label
-/// and a popover listing that day's events. Focusable + revealed on hover or
-/// focus so it works for keyboard/touch, not just mouse.
-pub fn timeline_marker(
-    left_pct: f64,
-    kind: &str,
-    count: usize,
-    label: impl Render,
-    popover: Markup,
-) -> Markup {
+/// A positioned event marker: a coloured dot (sized by count) sitting on the
+/// axis, with a popover listing that day's events. Focusable + revealed on hover
+/// or focus, so it works for keyboard/touch, not just mouse. The exact date is
+/// the popover header (the dots themselves stay unlabelled to avoid collisions).
+pub fn timeline_marker(left_pct: f64, kind: &str, count: usize, popover: Markup) -> Markup {
     let size = if count >= 8 {
         "w-5 h-5"
     } else if count > 1 {
@@ -514,7 +505,7 @@ pub fn timeline_marker(
         "w-3 h-3"
     };
     html! {
-        div class="group absolute top-6 -translate-x-1/2 z-10 flex flex-col items-center focus:outline-none"
+        div class="group absolute top-6 -translate-x-1/2 -translate-y-1/2 z-10 focus:outline-none"
             tabindex="0"
             style={ "left:" (format!("{left_pct:.3}")) "%" } {
             span class={ "flex items-center justify-center rounded-full ring-2 ring-white group-hover:ring-brand group-focus:ring-brand cursor-pointer " (timeline_kind_color(kind)) " " (size) } {
@@ -522,8 +513,7 @@ pub fn timeline_marker(
                     span class="text-xs font-bold leading-none text-white" { (count) }
                 }
             }
-            span class="mt-1 text-xs font-mono text-muted whitespace-nowrap" { (label) }
-            div class="hidden group-hover:block group-focus-within:block absolute top-full left-1/2 -translate-x-1/2 mt-1 w-64 max-h-36 overflow-y-auto rounded-lg border border-line bg-surface p-3 shadow-lg z-20" {
+            div class="hidden group-hover:block group-focus-within:block absolute top-full left-1/2 -translate-x-1/2 mt-2 w-64 max-h-40 overflow-y-auto rounded-lg border border-line bg-surface p-3 shadow-lg text-left z-20" {
                 (popover)
             }
         }
