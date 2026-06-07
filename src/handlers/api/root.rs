@@ -80,6 +80,7 @@ pub async fn index(_ctx: ApiKeyContext) -> Json<Value> {
             "subject_identifier_type": models::SUBJECT_IDENTIFIER_TYPES,
             "allergy_category": models::ALLERGY_CATEGORIES,
             "allergy_severity": models::ALLERGY_SEVERITIES,
+            "allergy_criticality": models::ALLERGY_CRITICALITIES,
             "allergy_status": models::ALLERGY_STATUSES,
             "medication_status": models::MEDICATION_STATUSES,
             "condition_status": models::CONDITION_STATUSES,

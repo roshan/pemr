@@ -23,6 +23,10 @@ pub struct Counts {
     pub immunizations: i64,
     pub observations: i64,
     pub skipped: i64,
+    /// Low-fidelity signals (parse failures, categories that came through empty,
+    /// dropped entries) so an importing caller can react rather than assume a
+    /// clean import. Empty == high fidelity.
+    pub warnings: Vec<String>,
 }
 
 /// First 10 chars of a FHIR date/dateTime → `Date`.
@@ -463,23 +467,32 @@ fn criticality_of(obs: Node<'_, '_>) -> Option<String> {
 }
 
 /// Reaction severity (FHIR: how bad a reaction WAS) from the Reaction Severity
-/// Observation (template …22.4.8) → mild | moderate | severe. Often absent.
+/// Observation (template …22.4.8), mapped to the SNOMED CT clinical-severity
+/// value set that C-CDA / Epic emit and that `models::ALLERGY_SEVERITIES`
+/// mirrors: mild | moderate | severe | life-threatening | fatal. Off-vocabulary
+/// values are dropped (None) rather than stored verbatim. Often absent.
 fn severity_of(obs: Node<'_, '_>) -> Option<String> {
-    let disp = descendants_named(obs, "observation")
+    let value = descendants_named(obs, "observation")
         .find(|o| has_template(*o, T_SEVERITY_OBS))
-        .and_then(|o| child(o, "value"))
-        .and_then(|v| v.attribute("displayName"))?
-        .to_lowercase();
-    Some(if disp.contains("severe") {
-        "severe"
-    } else if disp.contains("moderate") {
-        "moderate"
-    } else if disp.contains("mild") {
-        "mild"
-    } else {
-        return Some(disp);
-    }
-    .to_string())
+        .and_then(|o| child(o, "value"))?;
+    let code = value.attribute("code").unwrap_or("");
+    let disp = value.attribute("displayName").unwrap_or("").to_lowercase();
+    Some(
+        match code {
+            "255604002" => "mild",
+            "6736007" => "moderate",
+            "24484000" => "severe",
+            "442452003" => "life-threatening",
+            "399166001" => "fatal",
+            _ if disp.contains("fatal") => "fatal",
+            _ if disp.contains("life") => "life-threatening",
+            _ if disp.contains("severe") => "severe",
+            _ if disp.contains("moderate") => "moderate",
+            _ if disp.contains("mild") => "mild",
+            _ => return None,
+        }
+        .to_string(),
+    )
 }
 
 /// Normalize an HL7 `codeSystemName` to our short `code_system` labels.
@@ -562,15 +575,25 @@ pub fn ccda_patient_name(xml: &str) -> Option<(String, String)> {
     }
 }
 
+/// Per-document parse fidelity: did it parse, which target sections appeared, and
+/// how many entries were dropped — aggregated into importer warnings.
+#[derive(Default)]
+struct ParseStats {
+    parse_failed: bool,
+    skipped: i64,
+    sections: std::collections::HashSet<&'static str>,
+}
+
 /// Parse a C-CDA document into normalized items keyed by their provenance id.
 /// Sync; returns owned data (the roxmltree DOM is not held across an await).
-fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
+fn parse_ccda(xml: &str) -> (Vec<(String, CItem)>, ParseStats) {
     let doc = match roxmltree::Document::parse(xml) {
         Ok(d) => d,
-        Err(_) => return Vec::new(),
+        Err(_) => return (Vec::new(), ParseStats { parse_failed: true, ..Default::default() }),
     };
     let idmap = narrative_map(&doc);
     let mut out: Vec<(String, CItem)> = Vec::new();
+    let mut stats = ParseStats::default();
 
     for section in doc.descendants().filter(|n| n.tag_name().name() == "section") {
         let sec_code = child(section, "code")
@@ -580,6 +603,7 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
             // Allergies — name lives in participant/playingEntity/name (the coded
             // value is usually nullFlavor); reaction + criticality hang off it.
             "48765-2" => {
+                stats.sections.insert("allergies");
                 for obs in descendants_named(section, "observation") {
                     if !has_template(obs, T_ALLERGY_OBS) {
                         continue;
@@ -591,7 +615,10 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
                         .filter(|s| !s.is_empty())
                     {
                         Some(s) => s,
-                        None => continue,
+                        None => {
+                            stats.skipped += 1;
+                            continue;
+                        }
                     };
                     let code_node = pe.and_then(|pe| child(pe, "code"));
                     // Reaction manifestation(s) — FHIR reaction.manifestation: a
@@ -635,6 +662,7 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
             }
             // Medications
             "10160-0" => {
+                stats.sections.insert("medications");
                 for sa in descendants_named(section, "substanceAdministration") {
                     if !has_template(sa, T_MED_ACT) {
                         continue;
@@ -647,7 +675,10 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
                         .filter(|s| !s.is_empty())
                     {
                         Some(n) => n,
-                        None => continue,
+                        None => {
+                            stats.skipped += 1;
+                            continue;
+                        }
                     };
                     let ext_id = entry_id(sa).unwrap_or_else(|| hid("med", &name));
                     out.push((
@@ -664,6 +695,7 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
             // Problem list — skip the nested Status observation; the problem name
             // is referenced into the narrative, not on value/@displayName.
             "11450-4" => {
+                stats.sections.insert("conditions");
                 for obs in descendants_named(section, "observation") {
                     if !has_template(obs, T_PROBLEM_OBS) {
                         continue;
@@ -671,7 +703,10 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
                     let value = child(obs, "value");
                     let name = match value.and_then(|v| resolve_display(v, &idmap)) {
                         Some(n) => n,
-                        None => continue,
+                        None => {
+                            stats.skipped += 1;
+                            continue;
+                        }
                     };
                     // Skip Epic's "no known problems" negation assertions — these
                     // are not real conditions.
@@ -702,6 +737,7 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
             }
             // Immunizations — CVX code present, name via originalText/narrative.
             "11369-6" => {
+                stats.sections.insert("immunizations");
                 for sa in descendants_named(section, "substanceAdministration") {
                     if !has_template(sa, T_IMMUNIZATION) {
                         continue;
@@ -713,7 +749,10 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
                         .filter(|s| !s.is_empty())
                     {
                         Some(v) => v,
-                        None => continue,
+                        None => {
+                            stats.skipped += 1;
+                            continue;
+                        }
                     };
                     let occurred = child(sa, "effectiveTime")
                         .and_then(|et| {
@@ -739,6 +778,7 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
             // under an organizer; name in originalText, value/unit in attributes,
             // bounds in referenceRange. Grouped by panel (the organizer).
             "30954-2" | "8716-3" => {
+                stats.sections.insert(if sec_code == "8716-3" { "vitals" } else { "labs" });
                 let category = if sec_code == "8716-3" { "vital" } else { "lab" };
                 let tmpl = if sec_code == "8716-3" {
                     T_VITAL_OBS
@@ -754,7 +794,10 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
                         let code_node = child(obs, "code");
                         let display = match code_node.and_then(|c| resolve_display(c, &idmap)) {
                             Some(d) => d,
-                            None => continue,
+                            None => {
+                                stats.skipped += 1;
+                                continue;
+                            }
                         };
                         let effective = match child(obs, "effectiveTime")
                             .and_then(|et| {
@@ -765,7 +808,10 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
                             .and_then(ccda_date)
                         {
                             Some(d) => d,
-                            None => continue,
+                            None => {
+                                stats.skipped += 1;
+                                continue;
+                            }
                         };
                         let value = child(obs, "value");
                         let value_num = value
@@ -824,7 +870,7 @@ fn parse_ccda(xml: &str) -> Vec<(String, CItem)> {
             _ => {}
         }
     }
-    out
+    (out, stats)
 }
 
 /// Upsert one parsed C-CDA item onto an open connection/transaction.
@@ -911,6 +957,66 @@ fn tally(c: &mut Counts, item: &CItem) {
     }
 }
 
+fn category_label(item: &CItem) -> &'static str {
+    match item {
+        CItem::Allergy { .. } => "allergies",
+        CItem::Medication { .. } => "medications",
+        CItem::Condition { .. } => "conditions",
+        CItem::Immunization { .. } => "immunizations",
+        CItem::Observation { category, .. } => {
+            if *category == "vital" { "vitals" } else { "labs" }
+        }
+    }
+}
+
+/// Parse + dedup a C-CDA package, returning the deduped items (by provenance id)
+/// and fidelity warnings — low-fidelity signals (parse failures, a category that
+/// came through empty despite being present, dropped entries) an importer should
+/// react to. Empty warnings == high fidelity.
+fn collect_ccda(xmls: &[String]) -> (HashMap<String, CItem>, Vec<String>) {
+    let mut items: HashMap<String, CItem> = HashMap::new();
+    let mut sections: std::collections::HashSet<&'static str> = Default::default();
+    let mut docs_failed = 0usize;
+    let mut skipped = 0i64;
+    for xml in xmls {
+        let (its, st) = parse_ccda(xml);
+        if st.parse_failed {
+            docs_failed += 1;
+        }
+        sections.extend(st.sections);
+        // max (not sum): the same dropped entry recurs across visit summaries, so
+        // the richest document's count approximates the unique drop count.
+        skipped = skipped.max(st.skipped);
+        for (id, item) in its {
+            items.insert(id, item);
+        }
+    }
+
+    let mut per: HashMap<&'static str, usize> = HashMap::new();
+    for item in items.values() {
+        *per.entry(category_label(item)).or_default() += 1;
+    }
+
+    let mut warnings = Vec::new();
+    if docs_failed > 0 {
+        warnings.push(format!(
+            "{docs_failed} document(s) could not be parsed as C-CDA and were skipped"
+        ));
+    }
+    for label in ["allergies", "medications", "conditions", "immunizations", "labs", "vitals"] {
+        if sections.contains(label) && per.get(label).copied().unwrap_or(0) == 0 {
+            warnings.push(format!(
+                "{label}: present in the source but no structured entries imported \
+                 (narrative-only or unsupported encoding)"
+            ));
+        }
+    }
+    if skipped > 0 {
+        warnings.push(format!("~{skipped} entr(ies) skipped for a missing name or date"));
+    }
+    (items, warnings)
+}
+
 /// Import a single C-CDA document for `subject_id`, attributing rows to `source_id`.
 pub async fn import_ccda(
     pool: &PgPool,
@@ -932,13 +1038,8 @@ pub async fn import_ccda_docs(
     source_id: Uuid,
     xmls: &[String],
 ) -> Result<Counts, sqlx::Error> {
-    let mut items: HashMap<String, CItem> = HashMap::new();
-    for xml in xmls {
-        for (id, item) in parse_ccda(xml) {
-            items.insert(id, item);
-        }
-    }
-    let mut c = Counts::default();
+    let (items, warnings) = collect_ccda(xmls);
+    let mut c = Counts { warnings, ..Default::default() };
     let mut tx = pool.begin().await?;
     for (ext_id, item) in items {
         tally(&mut c, &item);
@@ -955,16 +1056,12 @@ pub struct Preview {
     pub labs: i64,
     pub vitals: i64,
     pub samples: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
 pub fn preview_ccda_docs(xmls: &[String]) -> Preview {
-    let mut items: HashMap<String, CItem> = HashMap::new();
-    for xml in xmls {
-        for (id, item) in parse_ccda(xml) {
-            items.insert(id, item);
-        }
-    }
-    let mut p = Preview::default();
+    let (items, warnings) = collect_ccda(xmls);
+    let mut p = Preview { warnings, ..Default::default() };
     for item in items.values() {
         tally(&mut p.counts, item);
         let sample = match item {
