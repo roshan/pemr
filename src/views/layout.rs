@@ -7,17 +7,22 @@ use crate::models::Subject;
 use crate::viewer::ViewerContext;
 
 /// First 12 hex of a vendored asset's sha256 — a content version for cache
-/// busting. The bytes are embedded at compile time so the hash always matches
-/// what ships, and it's computed once. Appending `?v=<hash>` makes the browser
-/// fetch a fresh copy whenever the asset's content changes (no manual refresh,
-/// no stale CSS after a deploy).
+/// busting. Read once from the same `static/` dir `ServeDir` serves (relative to
+/// cwd, which is the repo root in dev and `/app` in the container). Appending
+/// `?v=<hash>` makes the browser fetch a fresh copy whenever the asset's content
+/// changes — no manual refresh, no stale CSS after a deploy.
+fn asset_ver(path: &str) -> String {
+    std::fs::read(path)
+        .map(|b| crate::api_auth::sha256_hex(&b)[..12].to_string())
+        .unwrap_or_default()
+}
 fn css_ver() -> &'static str {
     static V: OnceLock<String> = OnceLock::new();
-    V.get_or_init(|| crate::api_auth::sha256_hex(include_bytes!("../../static/vendor/app.css"))[..12].to_string())
+    V.get_or_init(|| asset_ver("static/vendor/app.css"))
 }
 fn htmx_ver() -> &'static str {
     static V: OnceLock<String> = OnceLock::new();
-    V.get_or_init(|| crate::api_auth::sha256_hex(include_bytes!("../../static/vendor/htmx.min.js"))[..12].to_string())
+    V.get_or_init(|| asset_ver("static/vendor/htmx.min.js"))
 }
 
 pub struct Nav<'a> {
