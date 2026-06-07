@@ -452,6 +452,15 @@ pub fn timeline_kind_label(kind: &str) -> &'static str {
     }
 }
 
+/// Compact inline date input for the timeline window controls (not full-width
+/// like the form `input_date`).
+pub fn timeline_date_input(name: &str, value: &str) -> Markup {
+    html! {
+        input type="date" name=(name) value=(value)
+            class="rounded-md border border-line px-2 py-1 text-sm text-ink bg-surface";
+    }
+}
+
 /// Duration-selector tab (a plain link; the page re-renders for the window).
 pub fn timeline_tab(href: impl Render, label: impl Render, active: bool) -> Markup {
     let cls = if active {
@@ -477,7 +486,7 @@ pub fn timeline_legend_item(kind: &str) -> Markup {
 /// popovers overflow the band on hover (it doesn't clip).
 pub fn timeline_band(inner: Markup) -> Markup {
     html! {
-        div class="relative h-16 w-full" {
+        div class="relative h-16 w-full" data-tl-band="1" {
             div class="absolute left-0 right-0 top-6 border-t border-line" {}
             (inner)
         }

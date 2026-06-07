@@ -4,7 +4,7 @@ use maud::Markup;
 use serde::Deserialize;
 use sqlx::PgPool;
 
-use time::{Date, Month};
+use time::{Date, Duration, Month};
 
 use crate::error::{AppError, AppResult};
 use crate::handlers::{AppState, load_subjects};
@@ -62,6 +62,9 @@ pub async fn healthz() -> &'static str {
 pub struct TimelineQuery {
     pub subject: Option<String>,
     pub range: Option<String>,
+    /// Explicit window (ISO `YYYY-MM-DD`), set by wheel-zoom and the date boxes.
+    pub from: Option<String>,
+    pub to: Option<String>,
 }
 
 pub async fn timeline_page(
@@ -71,15 +74,18 @@ pub async fn timeline_page(
 ) -> AppResult<Markup> {
     let subject =
         parse_subject_filter(q.subject.as_deref()).map_err(AppError::BadRequest)?;
-    timeline_render(&state, viewer, subject, q.range.as_deref()).await
+    timeline_render(&state, viewer, subject, q.range.as_deref(), q.from.as_deref(), q.to.as_deref())
+        .await
 }
 
 pub async fn timeline_for_subject(
     State(state): State<AppState>,
     viewer: ViewerContext,
     Path(subject_id): Path<Uuid>,
+    Query(q): Query<TimelineQuery>,
 ) -> AppResult<Markup> {
-    timeline_render(&state, viewer, Some(subject_id), None).await
+    timeline_render(&state, viewer, Some(subject_id), q.range.as_deref(), q.from.as_deref(), q.to.as_deref())
+        .await
 }
 
 async fn timeline_render(
@@ -87,9 +93,11 @@ async fn timeline_render(
     viewer: ViewerContext,
     subject: Option<Uuid>,
     range: Option<&str>,
+    from: Option<&str>,
+    to: Option<&str>,
 ) -> AppResult<Markup> {
     let subjects = load_subjects(&state.pool).await?;
-    let data = load_timeline(&state.pool, subject, range.unwrap_or("1y")).await?;
+    let data = load_timeline(&state.pool, subject, range.unwrap_or("1y"), from, to).await?;
     let nav = Nav {
         title: "Timeline",
         current_path: "/timeline",
@@ -101,11 +109,14 @@ async fn timeline_render(
 }
 
 /// Build the timeline model for a subject (or all subjects). Reused by the
-/// `/timeline` page and the subject chart.
+/// `/timeline` page and the subject chart. An explicit `from`/`to` window (ISO)
+/// overrides the `range` preset.
 pub async fn load_timeline(
     pool: &PgPool,
     subject: Option<Uuid>,
     range: &str,
+    from: Option<&str>,
+    to: Option<&str>,
 ) -> Result<dashboard::TimelineData, sqlx::Error> {
     // Every dated clinical artifact, unioned into one event stream.
     let rows = sqlx::query_as::<_, (Date, String, String, String, Uuid)>(
@@ -145,56 +156,79 @@ pub async fn load_timeline(
         })
         .collect();
 
-    Ok(build_timeline_data(events, range, subject))
+    Ok(build_timeline_data(events, range, from, to, subject))
+}
+
+fn parse_iso(s: &str) -> Option<Date> {
+    let fmt = time::macros::format_description!("[year]-[month]-[day]");
+    Date::parse(s, fmt).ok()
 }
 
 /// Window + group events **time-proportionally** so gaps reflect real time and
-/// clusters read as dense. The zoom level sets both the window (anchored on the
-/// latest event) and the bucket granularity, so dots stay legible without
-/// overlap as you zoom out. Positions are percentages — the view fits the band
-/// to its width, so there's no dead scroll space.
+/// clusters read as dense. An explicit `from`/`to` window (from wheel-zoom or
+/// the date boxes) wins; otherwise the `range` preset anchors on the latest
+/// event. Bucket granularity follows the span so dots don't pile up. Positions
+/// are percentages — the band fits to width, no dead scroll space.
 fn build_timeline_data(
     mut events: Vec<dashboard::TimelineEvent>,
     range: &str,
+    from: Option<&str>,
+    to: Option<&str>,
     subject: Option<Uuid>,
 ) -> dashboard::TimelineData {
-    let range = match range {
-        "3m" | "1y" | "5y" | "all" => range,
-        _ => "1y",
-    }
-    .to_string();
     events.sort_by_key(|e| e.date);
     if events.is_empty() {
-        return dashboard::TimelineData { range, ticks: vec![], buckets: vec![], subject };
+        return dashboard::TimelineData {
+            range: range.to_string(),
+            start: String::new(),
+            end: String::new(),
+            min: String::new(),
+            max: String::new(),
+            ticks: vec![],
+            buckets: vec![],
+            subject,
+        };
     }
-
     let min_d = events.first().unwrap().date;
-    let end = events.last().unwrap().date;
-    let window_days: Option<i64> = match range.as_str() {
-        "3m" => Some(91),
-        "1y" => Some(365),
-        "5y" => Some(1826),
-        _ => None, // all
-    };
-    let start = window_days
-        .and_then(|d| end.checked_sub(time::Duration::days(d)))
-        .filter(|s| *s > min_d)
-        .unwrap_or(min_d);
+    let max_d = events.last().unwrap().date;
 
-    // Coarser buckets as the window widens, so dots don't pile up.
-    let bucket = |d: Date| -> Date {
-        match range.as_str() {
-            "3m" | "1y" => d, // day
-            "5y" => d
-                .checked_sub(time::Duration::days(d.weekday().number_days_from_monday() as i64))
-                .unwrap_or(d), // week (Monday)
-            _ => Date::from_calendar_date(d.year(), d.month(), 1).unwrap_or(d), // month
+    // Window: explicit from/to wins; else the preset anchored on the latest event.
+    let (start, end, range_label) = match (from.and_then(parse_iso), to.and_then(parse_iso)) {
+        (Some(a), Some(b)) if b > a => (a, b, String::new()),
+        _ => {
+            let r = match range {
+                "3m" | "1y" | "5y" | "all" => range,
+                _ => "1y",
+            };
+            let span = match r {
+                "3m" => 91,
+                "1y" => 365,
+                "5y" => 1826,
+                _ => (max_d - min_d).whole_days().max(1),
+            };
+            let start = max_d
+                .checked_sub(Duration::days(span))
+                .filter(|s| *s > min_d)
+                .unwrap_or(min_d);
+            (start, max_d, r.to_string())
         }
     };
 
     let span = (end - start).whole_days().max(1) as f64;
+    // Coarser buckets as the window widens.
+    let bucket = |d: Date| -> Date {
+        if span <= 150.0 {
+            d
+        } else if span <= 1100.0 {
+            d.checked_sub(Duration::days(d.weekday().number_days_from_monday() as i64))
+                .unwrap_or(d)
+        } else {
+            Date::from_calendar_date(d.year(), d.month(), 1).unwrap_or(d)
+        }
+    };
+
     let mut buckets: Vec<dashboard::TimelineBucket> = Vec::new();
-    for e in events.into_iter().filter(|e| e.date >= start) {
+    for e in events.into_iter().filter(|e| e.date >= start && e.date <= end) {
         let anchor = bucket(e.date);
         match buckets.last_mut() {
             Some(b) if b.date == anchor => b.events.push(e),
@@ -211,7 +245,16 @@ fn build_timeline_data(
         b.kind = primary_kind(&b.events);
     }
 
-    dashboard::TimelineData { range, ticks: timeline_ticks(start, end), buckets, subject }
+    dashboard::TimelineData {
+        range: range_label,
+        start: start.to_string(),
+        end: end.to_string(),
+        min: min_d.to_string(),
+        max: max_d.to_string(),
+        ticks: timeline_ticks(start, end),
+        buckets,
+        subject,
+    }
 }
 
 fn month3(m: Month) -> &'static str {
