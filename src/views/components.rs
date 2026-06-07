@@ -417,3 +417,123 @@ pub fn external_link(href: Option<&str>) -> Markup {
         _ => html! {},
     }
 }
+
+// ---------------------------------------------------------------------------
+// Horizontal event timeline (/timeline). Positioning (left%, width) is passed as
+// inline `style` since it's dynamic; everything visual stays in classes here.
+// ---------------------------------------------------------------------------
+
+/// Per-event-kind dot colour (standard palette literals so the scanner sees them).
+fn timeline_kind_color(kind: &str) -> &'static str {
+    match kind {
+        "incident" => "bg-rose-500",
+        "record" => "bg-indigo-500",
+        "condition" => "bg-amber-500",
+        "immunization" => "bg-emerald-500",
+        "appointment" => "bg-sky-500",
+        _ => "bg-slate-400", // observation / other
+    }
+}
+
+pub fn timeline_kind_label(kind: &str) -> &'static str {
+    match kind {
+        "incident" => "Incident",
+        "record" => "Record",
+        "condition" => "Condition",
+        "immunization" => "Immunization",
+        "appointment" => "Appointment",
+        "observation" => "Observation",
+        _ => "Event",
+    }
+}
+
+/// Duration-selector tab (a plain link; the page re-renders for the window).
+pub fn timeline_tab(href: impl Render, label: impl Render, active: bool) -> Markup {
+    let cls = if active {
+        "rounded-md bg-brand px-3 py-1 text-sm font-medium text-white"
+    } else {
+        "rounded-md border border-line px-3 py-1 text-sm text-muted hover:bg-brand-soft hover:text-brand-ink"
+    };
+    html! { a href=(href) class=(cls) { (label) } }
+}
+
+/// Legend entry: dot + kind name.
+pub fn timeline_legend_item(kind: &str) -> Markup {
+    html! {
+        span class="inline-flex items-center gap-1.5 text-xs text-muted" {
+            span class={ "inline-block w-2.5 h-2.5 rounded-full " (timeline_kind_color(kind)) } {}
+            (timeline_kind_label(kind))
+        }
+    }
+}
+
+/// Scroll viewport + positioned track. `width_px` widens the track so events
+/// spread out and the viewport scrolls left/right.
+pub fn timeline_scroll(width_px: i64, inner: Markup) -> Markup {
+    html! {
+        div class="relative overflow-x-auto rounded-lg border border-line bg-surface" {
+            div class="relative h-80" style={ "width:" (width_px) "px" } {
+                div class="absolute left-0 right-0 top-1/2 -translate-y-1/2 border-t border-line" {}
+                (inner)
+            }
+        }
+    }
+}
+
+/// A year/month tick: short rule on the axis + label below.
+pub fn timeline_tick(left_pct: f64, label: impl Render) -> Markup {
+    html! {
+        div class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col items-center"
+            style={ "left:" (format!("{left_pct:.3}")) "%" } {
+            span class="block w-px h-4 bg-line" {}
+            span class="mt-1 text-xs font-mono text-muted whitespace-nowrap" { (label) }
+        }
+    }
+}
+
+/// A positioned event marker: coloured dot (sized by count) with a CSS-hover
+/// popover listing that day's events.
+pub fn timeline_marker(left_pct: f64, kind: &str, count: usize, popover: Markup) -> Markup {
+    let size = if count >= 8 {
+        "w-5 h-5"
+    } else if count > 1 {
+        "w-4 h-4"
+    } else {
+        "w-3 h-3"
+    };
+    html! {
+        div class="group absolute top-1/2 -translate-x-1/2 -translate-y-1/2 z-10"
+            style={ "left:" (format!("{left_pct:.3}")) "%" } {
+            span class={ "flex items-center justify-center rounded-full ring-2 ring-white cursor-pointer " (timeline_kind_color(kind)) " " (size) } {
+                @if count > 1 {
+                    span class="text-xs font-bold leading-none text-white" { (count) }
+                }
+            }
+            div class="hidden group-hover:block absolute top-full left-1/2 -translate-x-1/2 mt-2 w-64 max-h-36 overflow-y-auto rounded-lg border border-line bg-surface p-3 shadow-lg z-20" {
+                (popover)
+            }
+        }
+    }
+}
+
+/// Popover body: a date header + the event rows.
+pub fn timeline_popover(date_label: impl Render, rows: Markup) -> Markup {
+    html! {
+        div class="text-xs font-semibold text-ink mb-1.5" { (date_label) }
+        (rows)
+    }
+}
+
+/// One event row inside a popover. `trailing` is an optional subject badge.
+pub fn timeline_event_row(kind: &str, title: impl Render, href: Option<&str>, trailing: Markup) -> Markup {
+    let dot = html! { span class={ "inline-block w-2 h-2 rounded-full mr-1.5 shrink-0 " (timeline_kind_color(kind)) } {} };
+    html! {
+        div class="flex items-baseline gap-1 text-sm py-0.5" {
+            @match href {
+                Some(h) => a href=(h) class="text-ink hover:text-brand" { (dot) (title) },
+                None => span class="text-ink" { (dot) (title) },
+            }
+            (trailing)
+        }
+    }
+}
