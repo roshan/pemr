@@ -46,7 +46,6 @@ const USAGE: &str =
 
 pub async fn run(argv: &[String]) -> R<()> {
     let args = parse_args(argv)?;
-    let database_url = std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL is required")?;
 
     let docs = load_documents(&args.path)?;
     if docs.is_empty() {
@@ -67,6 +66,9 @@ pub async fn run(argv: &[String]) -> R<()> {
         return Ok(());
     }
 
+    // DB is only needed to write — keep dry-run usable without one configured.
+    let database_url = std::env::var("DATABASE_URL")
+        .map_err(|_| "DATABASE_URL is required for --commit")?;
     let pool = crate::db::connect(&database_url).await?;
     let subject_id = resolve_subject(&pool, &args, &ccda_xml).await?;
     let source_id = ensure_source(&pool, &args.source).await?;
@@ -88,6 +90,14 @@ pub async fn run(argv: &[String]) -> R<()> {
         "\n✓ imported: {} allergies · {} meds · {} conditions · {} immunizations · {} observations",
         total.allergies, total.medications, total.conditions, total.immunizations, total.observations
     );
+    if total.warnings.is_empty() {
+        eprintln!("  fidelity: clean (no warnings)");
+    } else {
+        eprintln!("  ⚠ fidelity warnings:");
+        for w in &total.warnings {
+            eprintln!("    - {w}");
+        }
+    }
     Ok(())
 }
 
@@ -199,6 +209,12 @@ fn print_preview(p: &importer::Preview) {
     }
     if p.samples.len() > 40 {
         eprintln!("  … plus more");
+    }
+    if !p.warnings.is_empty() {
+        eprintln!("\n  ⚠ fidelity warnings:");
+        for w in &p.warnings {
+            eprintln!("    - {w}");
+        }
     }
 }
 

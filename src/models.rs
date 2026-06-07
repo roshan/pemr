@@ -502,7 +502,12 @@ mod clinical_model {
 
     // Phase 2
     pub const ALLERGY_CATEGORIES: &[&str] = &["drug", "food", "environmental", "other"];
-    pub const ALLERGY_SEVERITIES: &[&str] = &["mild", "moderate", "severe", "unknown"];
+    // Reaction severity — SNOMED CT clinical-severity value set (what C-CDA / Epic
+    // emit). Distinct from criticality (`ALLERGY_CRITICALITIES`).
+    pub const ALLERGY_SEVERITIES: &[&str] =
+        &["mild", "moderate", "severe", "life-threatening", "fatal"];
+    // FHIR AllergyIntolerance.criticality value set.
+    pub const ALLERGY_CRITICALITIES: &[&str] = &["high", "low", "unable-to-assess"];
     pub const ALLERGY_STATUSES: &[&str] = &["active", "inactive", "resolved", "entered_in_error"];
     pub const MEDICATION_STATUSES: &[&str] =
         &["active", "completed", "stopped", "on_hold", "entered_in_error"];
