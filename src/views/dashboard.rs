@@ -27,7 +27,6 @@ pub struct TimelineBucket {
 pub struct TimelineData {
     pub range: String, // 1y | 3y | 5y | all
     pub width_px: i64,
-    pub ticks: Vec<(f64, String)>,
     pub buckets: Vec<TimelineBucket>,
     pub subject: Option<Uuid>,
 }
@@ -228,32 +227,40 @@ fn incidents_timeline(
     }
 }
 
-pub fn visual_timeline(nav: &Nav<'_>, data: &TimelineData, subjects: &[Subject]) -> Markup {
+/// Compact "M/D/YY" for a dot's label (full date is in the popover header).
+fn short_date(d: Date) -> String {
+    format!("{}/{}/{:02}", d.month() as u8, d.day(), (d.year() % 100).abs())
+}
+
+const TIMELINE_KINDS: [&str; 6] =
+    ["incident", "record", "condition", "immunization", "observation", "appointment"];
+
+/// The reusable timeline body (legend + axis), shared by the full `/timeline`
+/// page and the subject chart. `tabs` shows the duration selector.
+pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) -> Markup {
     let base = match data.subject {
         Some(id) => format!("/timeline?subject={id}"),
         None => "/timeline".to_string(),
     };
     let rurl = |r: &str| format!("{base}{}range={r}", if base.contains('?') { "&" } else { "?" });
-    let kinds = ["incident", "record", "condition", "immunization", "observation", "appointment"];
-
-    let body = html! {
-        (c::page_title("Timeline"))
-        div class="flex flex-wrap items-center gap-2 mb-3" {
-            (c::timeline_tab(rurl("1y"), "1Y", data.range == "1y"))
-            (c::timeline_tab(rurl("3y"), "3Y", data.range == "3y"))
-            (c::timeline_tab(rurl("5y"), "5Y", data.range == "5y"))
-            (c::timeline_tab(rurl("all"), "All", data.range == "all"))
+    html! {
+        @if tabs {
+            div class="flex flex-wrap items-center gap-2 mb-3" {
+                (c::timeline_tab(rurl("1y"), "1Y", data.range == "1y"))
+                (c::timeline_tab(rurl("3y"), "3Y", data.range == "3y"))
+                (c::timeline_tab(rurl("5y"), "5Y", data.range == "5y"))
+                (c::timeline_tab(rurl("all"), "All", data.range == "all"))
+            }
         }
         div class="flex flex-wrap gap-3 mb-3" {
-            @for k in kinds { (c::timeline_legend_item(k)) }
+            @for k in TIMELINE_KINDS { (c::timeline_legend_item(k)) }
         }
         @if data.buckets.is_empty() {
             (c::empty_state("No dated events in this window."))
         } @else {
             (c::timeline_scroll(data.width_px, html! {
-                @for (pct, label) in &data.ticks { (c::timeline_tick(*pct, label)) }
                 @for b in &data.buckets {
-                    (c::timeline_marker(b.pct, &b.kind, b.events.len(),
+                    (c::timeline_marker(b.pct, &b.kind, b.events.len(), short_date(b.date),
                         c::timeline_popover(b.date.to_string(), html! {
                             @for e in &b.events {
                                 @let trailing = if data.subject.is_none() {
@@ -267,8 +274,15 @@ pub fn visual_timeline(nav: &Nav<'_>, data: &TimelineData, subjects: &[Subject])
                     ))
                 }
             }))
-            p class="text-xs text-muted mt-2" { "Scroll horizontally · hover a dot for that day's events." }
+            p class="text-xs text-muted mt-2" { "Scroll horizontally · hover or focus a dot for that day's events." }
         }
+    }
+}
+
+pub fn visual_timeline(nav: &Nav<'_>, data: &TimelineData, subjects: &[Subject]) -> Markup {
+    let body = html! {
+        (c::page_title("Timeline"))
+        (timeline_widget(data, subjects, true))
     };
     shell(nav, body)
 }

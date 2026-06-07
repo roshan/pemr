@@ -64,11 +64,19 @@ pub fn dashboard_page(
     subject: &Subject,
     summary: &ClinicalSummary,
     data: &DashboardData<'_>,
+    timeline: &dashboard::TimelineData,
 ) -> Markup {
     let inner = dashboard::body(nav, data);
     let body = html! {
         (bio_header(subject))
         (clinical_summary(summary))
+        section class="mb-6" {
+            div class="flex items-baseline justify-between mb-2" {
+                (c::section_heading("Timeline"))
+                (c::link_subtle(format!("/subjects/{}/timeline", subject.id), "Open full timeline →"))
+            }
+            (dashboard::timeline_widget(timeline, data.subjects, false))
+        }
         (inner)
     };
     shell(nav, body)

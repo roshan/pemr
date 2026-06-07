@@ -418,6 +418,11 @@ pub fn external_link(href: Option<&str>) -> Markup {
     }
 }
 
+/// A small inline text link (e.g. "View full timeline →").
+pub fn link_subtle(href: impl Render, label: impl Render) -> Markup {
+    html! { a href=(href) class="text-sm text-brand hover:underline" { (label) } }
+}
+
 // ---------------------------------------------------------------------------
 // Horizontal event timeline (/timeline). Positioning (left%, width) is passed as
 // inline `style` since it's dynamic; everything visual stays in classes here.
@@ -472,8 +477,8 @@ pub fn timeline_legend_item(kind: &str) -> Markup {
 pub fn timeline_scroll(width_px: i64, inner: Markup) -> Markup {
     html! {
         div class="relative overflow-x-auto rounded-lg border border-line bg-surface" {
-            div class="relative h-80" style={ "width:" (width_px) "px" } {
-                div class="absolute left-0 right-0 top-1/2 -translate-y-1/2 border-t border-line" {}
+            div class="relative h-64" style={ "width:" (width_px) "px" } {
+                div class="absolute left-0 right-0 top-10 border-t border-line" {}
                 (inner)
             }
         }
@@ -491,9 +496,16 @@ pub fn timeline_tick(left_pct: f64, label: impl Render) -> Markup {
     }
 }
 
-/// A positioned event marker: coloured dot (sized by count) with a CSS-hover
-/// popover listing that day's events.
-pub fn timeline_marker(left_pct: f64, kind: &str, count: usize, popover: Markup) -> Markup {
+/// A positioned event marker: coloured dot (sized by count) with a date label
+/// and a popover listing that day's events. Focusable + revealed on hover or
+/// focus so it works for keyboard/touch, not just mouse.
+pub fn timeline_marker(
+    left_pct: f64,
+    kind: &str,
+    count: usize,
+    label: impl Render,
+    popover: Markup,
+) -> Markup {
     let size = if count >= 8 {
         "w-5 h-5"
     } else if count > 1 {
@@ -502,14 +514,16 @@ pub fn timeline_marker(left_pct: f64, kind: &str, count: usize, popover: Markup)
         "w-3 h-3"
     };
     html! {
-        div class="group absolute top-1/2 -translate-x-1/2 -translate-y-1/2 z-10"
+        div class="group absolute top-6 -translate-x-1/2 z-10 flex flex-col items-center focus:outline-none"
+            tabindex="0"
             style={ "left:" (format!("{left_pct:.3}")) "%" } {
-            span class={ "flex items-center justify-center rounded-full ring-2 ring-white cursor-pointer " (timeline_kind_color(kind)) " " (size) } {
+            span class={ "flex items-center justify-center rounded-full ring-2 ring-white group-hover:ring-brand group-focus:ring-brand cursor-pointer " (timeline_kind_color(kind)) " " (size) } {
                 @if count > 1 {
                     span class="text-xs font-bold leading-none text-white" { (count) }
                 }
             }
-            div class="hidden group-hover:block absolute top-full left-1/2 -translate-x-1/2 mt-2 w-64 max-h-36 overflow-y-auto rounded-lg border border-line bg-surface p-3 shadow-lg z-20" {
+            span class="mt-1 text-xs font-mono text-muted whitespace-nowrap" { (label) }
+            div class="hidden group-hover:block group-focus-within:block absolute top-full left-1/2 -translate-x-1/2 mt-1 w-64 max-h-36 overflow-y-auto rounded-lg border border-line bg-surface p-3 shadow-lg z-20" {
                 (popover)
             }
         }

@@ -4,7 +4,7 @@ use maud::Markup;
 use serde::Deserialize;
 use sqlx::PgPool;
 
-use time::{Date, Month};
+use time::Date;
 
 use crate::error::{AppError, AppResult};
 use crate::handlers::{AppState, load_subjects};
@@ -89,6 +89,24 @@ async fn timeline_render(
     range: Option<&str>,
 ) -> AppResult<Markup> {
     let subjects = load_subjects(&state.pool).await?;
+    let data = load_timeline(&state.pool, subject, range.unwrap_or("all")).await?;
+    let nav = Nav {
+        title: "Timeline",
+        current_path: "/timeline",
+        subjects: &subjects,
+        current_subject: subject,
+        viewer: &viewer,
+    };
+    Ok(dashboard::visual_timeline(&nav, &data, &subjects))
+}
+
+/// Build the timeline model for a subject (or all subjects). Reused by the
+/// `/timeline` page and the subject chart.
+pub async fn load_timeline(
+    pool: &PgPool,
+    subject: Option<Uuid>,
+    range: &str,
+) -> Result<dashboard::TimelineData, sqlx::Error> {
     // Every dated clinical artifact, unioned into one event stream.
     let rows = sqlx::query_as::<_, (Date, String, String, String, Uuid)>(
         "select occurred_at as d, 'incident' as kind, title as t, id::text as i, subject_id as s
@@ -111,7 +129,7 @@ async fn timeline_render(
          order by d asc",
     )
     .bind(subject)
-    .fetch_all(&state.pool)
+    .fetch_all(pool)
     .await?;
 
     let events: Vec<dashboard::TimelineEvent> = rows
@@ -120,24 +138,20 @@ async fn timeline_render(
             let href = match kind.as_str() {
                 "incident" => Some(format!("/incidents/{id}")),
                 "record" => Some(format!("/records/{id}")),
+                "appointment" => Some(format!("/appointments/{id}/edit")),
                 _ => Some(format!("/subjects/{sid}")),
             };
             dashboard::TimelineEvent { date, kind, title, href, subject_id: sid }
         })
         .collect();
 
-    let data = build_timeline_data(events, range.unwrap_or("all"), subject);
-    let nav = Nav {
-        title: "Timeline",
-        current_path: "/timeline",
-        subjects: &subjects,
-        current_subject: subject,
-        viewer: &viewer,
-    };
-    Ok(dashboard::visual_timeline(&nav, &data, &subjects))
+    Ok(build_timeline_data(events, range, subject))
 }
 
-/// Window, group, and lay out events for the timeline view.
+/// Window, group, and lay out events. Dots are spaced **evenly** (by index, not
+/// calendar position) so a lone outlier — a 2013 record amid 2025 data — can't
+/// stretch the axis and push everything off-screen; the real date rides along in
+/// each marker's label and popover.
 fn build_timeline_data(
     mut events: Vec<dashboard::TimelineEvent>,
     range: &str,
@@ -150,11 +164,11 @@ fn build_timeline_data(
     .to_string();
     events.sort_by_key(|e| e.date);
     if events.is_empty() {
-        return dashboard::TimelineData { range, width_px: 1000, ticks: vec![], buckets: vec![], subject };
+        return dashboard::TimelineData { range, width_px: 1000, buckets: vec![], subject };
     }
 
-    // Anchor the window on the data (not "today"), so imported historical
-    // records frame nicely; the duration zooms within that.
+    // Window anchored on the data (not "today"): the latest event is the right
+    // edge; the duration trims older events off the left.
     let min_d = events.first().unwrap().date;
     let end = events.last().unwrap().date;
     let years: Option<i64> = match range.as_str() {
@@ -168,27 +182,26 @@ fn build_timeline_data(
         .filter(|s| *s > min_d)
         .unwrap_or(min_d);
 
-    let span = (end - start).whole_days().max(1) as f64;
-    let pct = |d: Date| 3.0 + (d - start).whole_days() as f64 / span * 94.0;
-    let width_px = (span * 3.0).clamp(1000.0, 6000.0) as i64;
-
     let mut buckets: Vec<dashboard::TimelineBucket> = Vec::new();
     for e in events.into_iter().filter(|e| e.date >= start) {
         match buckets.last_mut() {
             Some(b) if b.date == e.date => b.events.push(e),
             _ => buckets.push(dashboard::TimelineBucket {
-                pct: pct(e.date),
+                pct: 0.0,
                 date: e.date,
                 kind: String::new(),
                 events: vec![e],
             }),
         }
     }
-    for b in &mut buckets {
+    let n = buckets.len();
+    for (i, b) in buckets.iter_mut().enumerate() {
+        b.pct = if n <= 1 { 50.0 } else { 3.0 + i as f64 / (n - 1) as f64 * 94.0 };
         b.kind = primary_kind(&b.events);
     }
+    let width_px = (n as f64 * 64.0).clamp(1000.0, 6000.0) as i64;
 
-    dashboard::TimelineData { range, width_px, ticks: timeline_ticks(start, end, span), buckets, subject }
+    dashboard::TimelineData { range, width_px, buckets, subject }
 }
 
 /// The dot colour follows the highest-priority kind present in the bucket.
@@ -201,58 +214,6 @@ fn primary_kind(events: &[dashboard::TimelineEvent]) -> String {
         }
     }
     events.first().map(|e| e.kind.clone()).unwrap_or_default()
-}
-
-fn month3(m: Month) -> &'static str {
-    match m {
-        Month::January => "Jan",
-        Month::February => "Feb",
-        Month::March => "Mar",
-        Month::April => "Apr",
-        Month::May => "May",
-        Month::June => "Jun",
-        Month::July => "Jul",
-        Month::August => "Aug",
-        Month::September => "Sep",
-        Month::October => "Oct",
-        Month::November => "Nov",
-        Month::December => "Dec",
-    }
-}
-
-fn first_of_next_month(y: i32, m: Month) -> (i32, Month, Date) {
-    let (ny, nm) = if m == Month::December { (y + 1, Month::January) } else { (y, m.next()) };
-    (ny, nm, Date::from_calendar_date(ny, nm, 1).unwrap())
-}
-
-/// Axis ticks: monthly for short windows, yearly for long ones.
-fn timeline_ticks(start: Date, end: Date, span: f64) -> Vec<(f64, String)> {
-    let pct = |d: Date| 3.0 + (d - start).whole_days() as f64 / span * 94.0;
-    let mut out = Vec::new();
-    if span <= 800.0 {
-        let (mut y, mut m) = (start.year(), start.month());
-        let mut d = Date::from_calendar_date(y, m, 1).unwrap_or(start);
-        while d < start {
-            let (ny, nm, nd) = first_of_next_month(y, m);
-            y = ny;
-            m = nm;
-            d = nd;
-        }
-        while d <= end {
-            out.push((pct(d), format!("{} {}", month3(m), y)));
-            let (ny, nm, nd) = first_of_next_month(y, m);
-            y = ny;
-            m = nm;
-            d = nd;
-        }
-    } else {
-        for yr in start.year()..=end.year() {
-            let jan = Date::from_calendar_date(yr, Month::January, 1).unwrap();
-            let d = if jan < start { start } else { jan };
-            out.push((pct(d), yr.to_string()));
-        }
-    }
-    out
 }
 
 async fn timeline(

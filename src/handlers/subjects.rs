@@ -149,6 +149,7 @@ pub async fn detail(
     .await?;
 
     let summary = clinical_summary_for(&state.pool, &s).await?;
+    let timeline = crate::handlers::dashboard::load_timeline(&state.pool, Some(id), "all").await?;
 
     let nav = Nav {
         title: &s.full_name,
@@ -164,7 +165,7 @@ pub async fn detail(
         recent_incidents: &recent_incidents,
         recent_records: &recent_records,
     };
-    Ok(subject::dashboard_page(&nav, &s, &summary, &data))
+    Ok(subject::dashboard_page(&nav, &s, &summary, &data, &timeline))
 }
 
 /// Loads the clinical summary (Phase 1/2 tables) shared by the subject chart
