@@ -76,6 +76,9 @@ pub fn dashboard_page(
                 (c::link_subtle(format!("/subjects/{}/timeline", subject.id), "Open full timeline →"))
             }
             (dashboard::timeline_widget(timeline, false))
+            // Detail panel sits below the embedded timeline (its own block), so
+            // a marker click's event list persists and reads as separate.
+            div id="tl-detail" class="mt-4" { (c::timeline_detail_hint()) }
         }
         (inner)
     };
