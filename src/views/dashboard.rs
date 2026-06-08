@@ -268,8 +268,9 @@ pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) ->
             (c::timeline_band(html! {
                 @for (pct, label) in &data.ticks { (c::timeline_tick(*pct, label)) }
                 @for b in &data.buckets {
-                    (c::timeline_marker(b.pct, &b.kind, b.events.len(),
-                        c::timeline_popover(b.date.to_string(), html! {
+                    @let d = b.date.to_string();
+                    (c::timeline_marker(b.pct, &d, &b.kind, b.events.len(),
+                        c::timeline_popover(&d, html! {
                             @for e in &b.events {
                                 @let trailing = if data.subject.is_none() {
                                     subject_badge(subjects, e.subject_id)
@@ -287,40 +288,64 @@ pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) ->
 }
 
 /// Scroll-wheel zoom, centred on the cursor: the date under the pointer stays
-/// put while the window shrinks (wheel up) or grows (wheel down) by ~40% a tick.
+/// put while the window shrinks (wheel up) or grows (wheel down) by ~25% a tick.
 /// The only first-party JS in the app — wheel direction + cursor position can't
-/// be read in CSS/htmx. Reads the window + data bounds off `#tl-zoom` and
-/// navigates to an explicit `from`/`to`; at the fully-zoomed-out end it lets the
-/// page scroll. Also wires the from/to date boxes.
+/// be read in CSS/htmx. Reads the current window off `#tl-inner` + data bounds
+/// off `#tl-zoom` and `htmx.ajax`-swaps `#tl-inner` to an explicit `from`/`to`
+/// window. A zoom-in that would land on a blank gap is refused (it checks the
+/// visible markers' `data-d` dates), so you stop at the tightest populated view
+/// rather than an empty one; at the fully-zoomed-out end it lets the page
+/// scroll, and the empty-state still accepts a wheel so you can always zoom back
+/// out. Initialization is deferred to `DOMContentLoaded` because htmx loads with
+/// `defer` and isn't ready while this inline script first runs.
 const WHEEL_ZOOM_JS: &str = r#"
 (function(){
-  var z=document.getElementById('tl-zoom'); if(!z||!window.htmx) return;
-  var DAY=86400000, base=z.dataset.base, busy=false;
-  function ms(s){ return Date.parse(s); }
-  function iso(m){ return new Date(m).toISOString().slice(0,10); }
-  z.addEventListener('htmx:afterSettle', function(){ busy=false; });
-  z.addEventListener('wheel', function(e){
-    var inner=document.getElementById('tl-inner'), band=z.querySelector('[data-tl-band]');
-    if(!inner||!band) return;
-    var br=band.getBoundingClientRect();
-    if(e.clientY < br.top-28 || e.clientY > br.bottom+28) return;   // not over the strip: page scrolls
-    var s=ms(inner.dataset.start), en=ms(inner.dataset.end), mn=ms(z.dataset.min), mx=ms(z.dataset.max);
-    if(isNaN(s)||isNaN(en)) return;
-    var span=en-s, full=Math.max(DAY, mx-mn);
-    if(e.deltaY>0 && span>=full) return;                           // fully out: page scrolls
-    e.preventDefault();
-    if(busy) return; busy=true; setTimeout(function(){busy=false;},400);
-    var tf=Math.min(1, Math.max(0, ((e.clientX-br.left)/Math.max(1,br.width)-0.04)/0.92));
-    var focal=s+tf*span;
-    var ns=e.deltaY<0 ? span*0.6 : span/0.6;
-    ns=Math.min(full, Math.max(21*DAY, ns));
-    var a,b;
-    if(ns>=full){ a=mn; b=mx; }
-    else { a=Math.round(focal-tf*ns); b=a+ns;
-           if(a<mn){a=mn;b=mn+ns;} if(b>mx){b=mx;a=mx-ns;} }
-    var url=base+(base.indexOf('?')>=0?'&':'?')+'from='+iso(a)+'&to='+iso(b);
-    window.htmx.ajax('GET', url, {target:'#tl-inner', swap:'outerHTML'});
-  }, {passive:false});
+  // htmx.min.js loads with `defer`, so it isn't ready while this inline script
+  // runs during parse. Wait for DOMContentLoaded (fires after deferred scripts)
+  // before wiring up, or window.htmx would be undefined and we'd bail silently.
+  function init(){
+    var z=document.getElementById('tl-zoom'); if(!z||!window.htmx) return;
+    var DAY=86400000, base=z.dataset.base, busy=false;
+    function ms(s){ return Date.parse(s); }
+    function iso(m){ return new Date(m).toISOString().slice(0,10); }
+    z.addEventListener('htmx:afterSettle', function(){ busy=false; });
+    z.addEventListener('wheel', function(e){
+      var inner=document.getElementById('tl-inner'); if(!inner) return;
+      // The empty-state has no [data-tl-band]; fall back to #tl-inner so the
+      // wheel still works there and the user can always zoom back out.
+      var band=z.querySelector('[data-tl-band]')||inner;
+      var br=band.getBoundingClientRect();
+      if(e.clientY < br.top-28 || e.clientY > br.bottom+28) return;   // not over the strip: page scrolls
+      var s=ms(inner.dataset.start), en=ms(inner.dataset.end), mn=ms(z.dataset.min), mx=ms(z.dataset.max);
+      if(isNaN(s)||isNaN(en)) return;
+      var span=en-s, full=Math.max(DAY, mx-mn);
+      if(e.deltaY>0 && span>=full) return;                           // fully out: page scrolls
+      e.preventDefault();
+      if(busy) return;
+      var tf=Math.min(1, Math.max(0, ((e.clientX-br.left)/Math.max(1,br.width)-0.04)/0.92));
+      var focal=s+tf*span;
+      var ns=e.deltaY<0 ? span*0.8 : span/0.8;                       // gentler than 0.6: ~25%/tick
+      ns=Math.min(full, Math.max(21*DAY, ns));
+      var a,b;
+      if(ns>=full){ a=mn; b=mx; }
+      else { a=Math.round(focal-tf*ns); b=a+ns;
+             if(a<mn){a=mn;b=mn+ns;} if(b>mx){b=mx;a=mx-ns;} }
+      // Zoom-in: refuse a step that would land on a blank gap. Every visible
+      // marker carries its date in data-d, and a zoom-in window is always a
+      // subset of the current one, so if no marker falls inside [a,b] the new
+      // window is empty — stay put at the tightest populated view.
+      if(e.deltaY<0){
+        var hit=false, dots=inner.querySelectorAll('[data-d]');
+        for(var i=0;i<dots.length;i++){ var dm=ms(dots[i].dataset.d); if(dm>=a&&dm<=b){hit=true;break;} }
+        if(!hit) return;
+      }
+      busy=true; setTimeout(function(){busy=false;},400);
+      var url=base+(base.indexOf('?')>=0?'&':'?')+'from='+iso(a)+'&to='+iso(b);
+      window.htmx.ajax('GET', url, {target:'#tl-inner', swap:'outerHTML'});
+    }, {passive:false});
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 "#;
 
