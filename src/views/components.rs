@@ -496,6 +496,18 @@ pub fn timeline_band(inner: Markup) -> Markup {
     }
 }
 
+/// A faint, centered note drawn on the band when the current window has a time
+/// axis but no events. Keeps the band (and the wheel handler's geometry) in
+/// place so pan/zoom keep working, rather than swapping in a bare empty-state.
+/// `pointer-events-none` so it never intercepts the wheel.
+pub fn timeline_band_empty_note() -> Markup {
+    html! {
+        span class="absolute inset-x-0 top-6 -translate-y-1/2 text-center text-xs text-muted pointer-events-none" {
+            "No events in this window — scroll to pan, or zoom out"
+        }
+    }
+}
+
 /// A month/year axis label, placed below the axis at its time position.
 pub fn timeline_tick(left_pct: f64, label: impl Render) -> Markup {
     html! {
