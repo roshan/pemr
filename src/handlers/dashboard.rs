@@ -295,7 +295,10 @@ fn timeline_ticks(start: Date, end: Date) -> Vec<(f64, String)> {
     let end_idx = end.year() * 12 + (end.month() as i32 - 1);
     while idx <= end_idx {
         let (y, m) = (idx.div_euclid(12), Month::try_from(idx.rem_euclid(12) as u8 + 1).unwrap());
-        let d = Date::from_calendar_date(y, m, 1).unwrap();
+        idx += step;
+        // Day 1 of any real month is always a valid date; skip rather than panic
+        // if `time`'s year bounds are ever exceeded.
+        let Ok(d) = Date::from_calendar_date(y, m, 1) else { continue };
         if d >= start {
             let label = if step >= 12 {
                 y.to_string()
@@ -304,7 +307,6 @@ fn timeline_ticks(start: Date, end: Date) -> Vec<(f64, String)> {
             };
             out.push((pct(d), label));
         }
-        idx += step;
     }
     out
 }

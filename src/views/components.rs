@@ -508,7 +508,9 @@ pub fn timeline_tick(left_pct: f64, label: impl Render) -> Markup {
 /// axis, with a popover listing that day's events. Focusable + revealed on hover
 /// or focus, so it works for keyboard/touch, not just mouse. The exact date is
 /// the popover header (the dots themselves stay unlabelled to avoid collisions).
-pub fn timeline_marker(left_pct: f64, kind: &str, count: usize, popover: Markup) -> Markup {
+/// `date_iso` is exposed as `data-d` so the wheel-zoom script can tell when a
+/// proposed window would contain no events and stop zooming in there.
+pub fn timeline_marker(left_pct: f64, date_iso: &str, kind: &str, count: usize, popover: Markup) -> Markup {
     let size = if count >= 8 {
         "w-5 h-5"
     } else if count > 1 {
@@ -518,7 +520,7 @@ pub fn timeline_marker(left_pct: f64, kind: &str, count: usize, popover: Markup)
     };
     html! {
         div class="group absolute top-6 -translate-x-1/2 -translate-y-1/2 z-10 focus:outline-none"
-            tabindex="0"
+            tabindex="0" data-d=(date_iso)
             style={ "left:" (format!("{left_pct:.3}")) "%" } {
             span class={ "flex items-center justify-center rounded-full ring-2 ring-white group-hover:ring-brand group-focus:ring-brand cursor-pointer " (timeline_kind_color(kind)) " " (size) } {
                 @if count > 1 {
