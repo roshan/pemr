@@ -100,7 +100,6 @@ async fn timeline_render(
     q: &TimelineQuery,
     hx: bool,
 ) -> AppResult<Markup> {
-    let subjects = load_subjects(&state.pool).await?;
     let data = load_timeline(
         &state.pool,
         subject,
@@ -109,10 +108,13 @@ async fn timeline_render(
         q.to.as_deref(),
     )
     .await?;
-    // htmx zoom/window requests swap just the inner band; full loads get the page.
+    // htmx zoom/window requests swap just the inner band; full loads get the
+    // page. The inner band doesn't need the subjects list, so skip that query on
+    // the hot zoom path.
     if hx {
-        return Ok(dashboard::timeline_inner(&data, &subjects));
+        return Ok(dashboard::timeline_inner(&data));
     }
+    let subjects = load_subjects(&state.pool).await?;
     let nav = Nav {
         title: "Timeline",
         current_path: "/timeline",
@@ -120,20 +122,16 @@ async fn timeline_render(
         current_subject: subject,
         viewer: &viewer,
     };
-    Ok(dashboard::visual_timeline(&nav, &data, &subjects))
+    Ok(dashboard::visual_timeline(&nav, &data))
 }
 
-/// Build the timeline model for a subject (or all subjects). Reused by the
-/// `/timeline` page and the subject chart. An explicit `from`/`to` window (ISO)
-/// overrides the `range` preset.
-pub async fn load_timeline(
+/// Every dated clinical artifact for a subject (or all subjects), unioned into
+/// one event stream, sorted oldest-first. Shared by the windowed timeline and
+/// the per-point detail panel.
+async fn load_events(
     pool: &PgPool,
     subject: Option<Uuid>,
-    range: &str,
-    from: Option<&str>,
-    to: Option<&str>,
-) -> Result<dashboard::TimelineData, sqlx::Error> {
-    // Every dated clinical artifact, unioned into one event stream.
+) -> Result<Vec<dashboard::TimelineEvent>, sqlx::Error> {
     let rows = sqlx::query_as::<_, (Date, String, String, String, Uuid)>(
         "select occurred_at as d, 'incident' as kind, title as t, id::text as i, subject_id as s
            from incidents where occurred_at is not null and ($1::uuid is null or subject_id = $1)
@@ -158,7 +156,7 @@ pub async fn load_timeline(
     .fetch_all(pool)
     .await?;
 
-    let events: Vec<dashboard::TimelineEvent> = rows
+    Ok(rows
         .into_iter()
         .map(|(date, kind, title, id, sid)| {
             let href = match kind.as_str() {
@@ -169,9 +167,53 @@ pub async fn load_timeline(
             };
             dashboard::TimelineEvent { date, kind, title, href, subject_id: sid }
         })
-        .collect();
+        .collect())
+}
 
+/// Build the timeline model for a subject (or all subjects). Reused by the
+/// `/timeline` page and the subject chart. An explicit `from`/`to` window (ISO)
+/// overrides the `range` preset.
+pub async fn load_timeline(
+    pool: &PgPool,
+    subject: Option<Uuid>,
+    range: &str,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<dashboard::TimelineData, sqlx::Error> {
+    let events = load_events(pool, subject).await?;
     Ok(build_timeline_data(events, range, from, to, subject))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TimelineDayQuery {
+    pub subject: Option<String>,
+    pub from: String,
+    pub to: String,
+}
+
+/// The persistent detail panel for a clicked timeline point: every event whose
+/// date falls in the bucket's `[from,to]` span. Always an htmx partial.
+pub async fn timeline_day(
+    State(state): State<AppState>,
+    Query(q): Query<TimelineDayQuery>,
+) -> AppResult<Markup> {
+    let subject = parse_subject_filter(q.subject.as_deref()).map_err(AppError::BadRequest)?;
+    let from = parse_iso(&q.from).ok_or_else(|| AppError::BadRequest("invalid 'from' date".into()))?;
+    let to = parse_iso(&q.to).ok_or_else(|| AppError::BadRequest("invalid 'to' date".into()))?;
+    let subjects = load_subjects(&state.pool).await?;
+    let mut events = load_events(&state.pool, subject).await?;
+    events.retain(|e| e.date >= from && e.date <= to);
+    events.sort_by_key(|e| e.date);
+    let heading = if from == to {
+        fmt_day(from)
+    } else {
+        format!("{} – {}", fmt_day(from), fmt_day(to))
+    };
+    Ok(dashboard::timeline_day_detail(&events, subject, &subjects, &heading))
+}
+
+fn fmt_day(d: Date) -> String {
+    format!("{} {}, {}", month3(d.month()), d.day(), d.year())
 }
 
 fn parse_iso(s: &str) -> Option<Date> {

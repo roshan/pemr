@@ -504,13 +504,20 @@ pub fn timeline_tick(left_pct: f64, label: impl Render) -> Markup {
     }
 }
 
-/// A positioned event marker: a coloured dot (sized by count) sitting on the
-/// axis, with a popover listing that day's events. Focusable + revealed on hover
-/// or focus, so it works for keyboard/touch, not just mouse. The exact date is
-/// the popover header (the dots themselves stay unlabelled to avoid collisions).
-/// `date_iso` is exposed as `data-d` so the wheel-zoom script can tell when a
-/// proposed window would contain no events and stop zooming in there.
-pub fn timeline_marker(left_pct: f64, date_iso: &str, kind: &str, count: usize, popover: Markup) -> Markup {
+/// A positioned, clickable event marker: a coloured dot (sized by count) on the
+/// axis. Clicking it — or activating it from the keyboard (it's a real
+/// `<button>`) — hx-gets that point's events into the persistent `#tl-detail`
+/// panel below, so the list stays open to click through (unlike a hover popover
+/// that vanishes on mouse-out). `date_iso` is exposed as `data-d` so the
+/// wheel-zoom script can tell when a proposed window would contain no events.
+pub fn timeline_marker(
+    left_pct: f64,
+    date_iso: &str,
+    kind: &str,
+    count: usize,
+    detail_url: &str,
+    aria: &str,
+) -> Markup {
     let size = if count >= 8 {
         "w-5 h-5"
     } else if count > 1 {
@@ -519,30 +526,45 @@ pub fn timeline_marker(left_pct: f64, date_iso: &str, kind: &str, count: usize, 
         "w-3 h-3"
     };
     html! {
-        div class="group absolute top-6 -translate-x-1/2 -translate-y-1/2 z-10 focus:outline-none"
-            tabindex="0" data-d=(date_iso)
+        button type="button"
+            class="group absolute top-6 -translate-x-1/2 -translate-y-1/2 z-10 cursor-pointer focus:outline-none"
+            data-d=(date_iso) title=(aria) aria-label=(aria)
+            hx-get=(detail_url) hx-target="#tl-detail" hx-swap="innerHTML"
             style={ "left:" (format!("{left_pct:.3}")) "%" } {
-            span class={ "flex items-center justify-center rounded-full ring-2 ring-white group-hover:ring-brand group-focus:ring-brand cursor-pointer " (timeline_kind_color(kind)) " " (size) } {
+            span class={ "flex items-center justify-center rounded-full ring-2 ring-white group-hover:ring-brand group-focus:ring-brand " (timeline_kind_color(kind)) " " (size) } {
                 @if count > 1 {
                     span class="text-xs font-bold leading-none text-white" { (count) }
                 }
-            }
-            div class="hidden group-hover:block group-focus-within:block absolute top-full left-1/2 -translate-x-1/2 mt-2 w-64 max-h-40 overflow-y-auto rounded-lg border border-line bg-surface p-3 shadow-lg text-left z-20" {
-                (popover)
             }
         }
     }
 }
 
-/// Popover body: a date header + the event rows.
-pub fn timeline_popover(date_label: impl Render, rows: Markup) -> Markup {
+/// Placeholder shown in the persistent detail panel until a point is selected.
+pub fn timeline_detail_hint() -> Markup {
     html! {
-        div class="text-xs font-semibold text-ink mb-1.5" { (date_label) }
-        (rows)
+        p class="text-sm text-muted" { "Select a point on the timeline to list its events." }
     }
 }
 
-/// One event row inside a popover. `trailing` is an optional subject badge.
+/// Contents of the persistent detail panel for one selected point: a date
+/// heading, an event count, and the clickable rows.
+pub fn timeline_detail(heading: impl Render, count: usize, rows: Markup) -> Markup {
+    html! {
+        div class="rounded-lg border border-line bg-surface p-4" {
+            div class="flex items-baseline justify-between gap-3 mb-2" {
+                span class="text-sm font-semibold text-ink" { (heading) }
+                span class="text-xs text-muted whitespace-nowrap" {
+                    (count) @if count == 1 { " event" } @else { " events" }
+                }
+            }
+            div class="space-y-0.5" { (rows) }
+        }
+    }
+}
+
+/// One event row (a coloured kind-dot + linked title). Used in the detail panel.
+/// `trailing` is an optional subject badge.
 pub fn timeline_event_row(kind: &str, title: impl Render, href: Option<&str>, trailing: Markup) -> Markup {
     let dot = html! { span class={ "inline-block w-2 h-2 rounded-full mr-1.5 shrink-0 " (timeline_kind_color(kind)) } {} };
     html! {

@@ -236,7 +236,7 @@ const TIMELINE_KINDS: [&str; 6] =
 
 /// The reusable timeline body (legend + axis), shared by the full `/timeline`
 /// page and the subject chart. `tabs` shows the duration selector.
-pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) -> Markup {
+pub fn timeline_widget(data: &TimelineData, tabs: bool) -> Markup {
     let base = match data.subject {
         Some(id) => format!("/timeline?subject={id}"),
         None => "/timeline".to_string(),
@@ -269,22 +269,53 @@ pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) ->
                 @for (pct, label) in &data.ticks { (c::timeline_tick(*pct, label)) }
                 @for b in &data.buckets {
                     @let d = b.date.to_string();
-                    (c::timeline_marker(b.pct, &d, &b.kind, b.events.len(),
-                        c::timeline_popover(&d, html! {
-                            @for e in &b.events {
-                                @let trailing = if data.subject.is_none() {
-                                    subject_badge(subjects, e.subject_id)
-                                } else {
-                                    html! {}
-                                };
-                                (c::timeline_event_row(&e.kind, &e.title, e.href.as_deref(), trailing))
-                            }
-                        })
-                    ))
+                    @let lo = b.events.first().map(|e| e.date.to_string()).unwrap_or_else(|| d.clone());
+                    @let hi = b.events.last().map(|e| e.date.to_string()).unwrap_or_else(|| d.clone());
+                    @let n = b.events.len();
+                    @let aria = format!("{d} · {n} event{}", if n == 1 { "" } else { "s" });
+                    (c::timeline_marker(b.pct, &d, &b.kind, n, &day_detail_url(data.subject, &lo, &hi), &aria))
                 }
             }))
         }
+        // Persistent panel: a marker click hx-swaps its events in here, so the
+        // list stays open to click through. Lives inside #tl-inner, so it resets
+        // when the window changes (zoom / tab / date box).
+        div id="tl-detail" class="mt-4" { (c::timeline_detail_hint()) }
     }
+}
+
+/// htmx URL a marker click fetches into `#tl-detail`. `from`/`to` are the
+/// bucket's own date span, so the detail handler re-queries exactly its events.
+fn day_detail_url(subject: Option<uuid::Uuid>, from: &str, to: &str) -> String {
+    match subject {
+        Some(id) => format!("/timeline/day?subject={id}&from={from}&to={to}"),
+        None => format!("/timeline/day?from={from}&to={to}"),
+    }
+}
+
+/// Contents of the persistent detail panel for a clicked timeline point —
+/// rendered into `#tl-detail` by an htmx GET to `/timeline/day`. `heading` is
+/// the pre-formatted date (or date range) of the bucket.
+pub fn timeline_day_detail(
+    events: &[TimelineEvent],
+    subject: Option<Uuid>,
+    subjects: &[Subject],
+    heading: &str,
+) -> Markup {
+    c::timeline_detail(heading, events.len(), html! {
+        @if events.is_empty() {
+            p class="text-sm text-muted" { "No events." }
+        } @else {
+            @for e in events {
+                @let trailing = if subject.is_none() {
+                    subject_badge(subjects, e.subject_id)
+                } else {
+                    html! {}
+                };
+                (c::timeline_event_row(&e.kind, &e.title, e.href.as_deref(), trailing))
+            }
+        }
+    })
 }
 
 /// Scroll-wheel zoom, centred on the cursor: the date under the pointer stays
@@ -292,12 +323,14 @@ pub fn timeline_widget(data: &TimelineData, subjects: &[Subject], tabs: bool) ->
 /// The only first-party JS in the app — wheel direction + cursor position can't
 /// be read in CSS/htmx. Reads the current window off `#tl-inner` + data bounds
 /// off `#tl-zoom` and `htmx.ajax`-swaps `#tl-inner` to an explicit `from`/`to`
-/// window. A zoom-in that would land on a blank gap is refused (it checks the
-/// visible markers' `data-d` dates), so you stop at the tightest populated view
-/// rather than an empty one; at the fully-zoomed-out end it lets the page
-/// scroll, and the empty-state still accepts a wheel so you can always zoom back
-/// out. Initialization is deferred to `DOMContentLoaded` because htmx loads with
-/// `defer` and isn't ready while this inline script first runs.
+/// window. The cursored date keeps its fraction of the window so it stays under
+/// the pointer (no edge re-shifting). A zoom-in that would land on a blank gap
+/// is refused (it checks the visible markers' `data-d` dates), so you stop at
+/// the tightest populated view rather than an empty one; at the fully-zoomed-out
+/// end it lets the page scroll, and the empty-state still accepts a wheel so you
+/// can always zoom back out. Initialization is deferred to `DOMContentLoaded`
+/// because htmx loads with `defer` and isn't ready while this inline script
+/// first runs.
 const WHEEL_ZOOM_JS: &str = r#"
 (function(){
   // htmx.min.js loads with `defer`, so it isn't ready while this inline script
@@ -327,9 +360,13 @@ const WHEEL_ZOOM_JS: &str = r#"
       var ns=e.deltaY<0 ? span*0.8 : span/0.8;                       // gentler than 0.6: ~25%/tick
       ns=Math.min(full, Math.max(21*DAY, ns));
       var a,b;
+      // Pure cursor-centred: the date under the pointer keeps the same fraction
+      // of the window, so it stays put. We deliberately DON'T shift the window
+      // back inside [mn,mx] near the edges (that drifts the cursored date) — the
+      // span is already capped at the data range, and the zoom-in gap-check
+      // below stops us drifting into empty space.
       if(ns>=full){ a=mn; b=mx; }
-      else { a=Math.round(focal-tf*ns); b=a+ns;
-             if(a<mn){a=mn;b=mn+ns;} if(b>mx){b=mx;a=mx-ns;} }
+      else { a=Math.round(focal-tf*ns); b=a+ns; }
       // Zoom-in: refuse a step that would land on a blank gap. Every visible
       // marker carries its date in data-d, and a zoom-in window is always a
       // subset of the current one, so if no marker falls inside [a,b] the new
@@ -351,15 +388,15 @@ const WHEEL_ZOOM_JS: &str = r#"
 
 /// The swappable inner band (htmx target `#tl-inner`). Carries the current
 /// window so the zoom script can read it after each in-place swap.
-pub fn timeline_inner(data: &TimelineData, subjects: &[Subject]) -> Markup {
+pub fn timeline_inner(data: &TimelineData) -> Markup {
     html! {
         div id="tl-inner" data-start=(data.start) data-end=(data.end) {
-            (timeline_widget(data, subjects, true))
+            (timeline_widget(data, true))
         }
     }
 }
 
-pub fn visual_timeline(nav: &Nav<'_>, data: &TimelineData, subjects: &[Subject]) -> Markup {
+pub fn visual_timeline(nav: &Nav<'_>, data: &TimelineData) -> Markup {
     let base = match data.subject {
         Some(id) => format!("/timeline?subject={id}"),
         None => "/timeline".to_string(),
@@ -367,7 +404,7 @@ pub fn visual_timeline(nav: &Nav<'_>, data: &TimelineData, subjects: &[Subject])
     let body = html! {
         (c::page_title("Timeline"))
         div id="tl-zoom" data-base=(base) data-min=(data.min) data-max=(data.max) {
-            (timeline_inner(data, subjects))
+            (timeline_inner(data))
         }
         script { (PreEscaped(WHEEL_ZOOM_JS)) }
     };
