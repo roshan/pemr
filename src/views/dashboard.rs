@@ -319,67 +319,88 @@ pub fn timeline_day_detail(
     })
 }
 
-/// Scroll-wheel zoom, centred on the cursor: the date under the pointer stays
-/// put while the window shrinks (wheel up) or grows (wheel down) by ~25% a tick.
-/// The only first-party JS in the app — wheel direction + cursor position can't
-/// be read in CSS/htmx. Reads the current window off `#tl-inner` + data bounds
-/// off `#tl-zoom` and `htmx.ajax`-swaps `#tl-inner` to an explicit `from`/`to`
-/// window. The cursored date keeps its fraction of the window so it stays under
-/// the pointer (no edge re-shifting). A zoom-in that would land on a blank gap
-/// is refused (it checks the visible markers' `data-d` dates), so you stop at
-/// the tightest populated view rather than an empty one; at the fully-zoomed-out
-/// end it lets the page scroll, and the empty-state still accepts a wheel so you
-/// can always zoom back out. Initialization is deferred to `DOMContentLoaded`
-/// because htmx loads with `defer` and isn't ready while this inline script
-/// first runs.
+/// Trackpad/wheel navigation for the timeline, matching macOS expectations
+/// (the only first-party JS in the app — wheel axis + cursor position can't be
+/// read in CSS/htmx):
+///   • Horizontal swipe → PAN. Scroll right moves the window to later dates,
+///     1:1 with the finger. Always `preventDefault`ed so a sideways swipe can't
+///     trigger browser back/forward navigation.
+///   • Vertical up → ZOOM IN, down → ZOOM OUT, both about the day under the
+///     cursor (it keeps its fraction of the window, so it stays put).
+/// It keeps the intended window in JS (`cur`), accumulating sub-day deltas, and
+/// `htmx.ajax`-swaps `#tl-inner` to that `from`/`to` (coalesced: one request in
+/// flight, the latest window sent on settle). A zoom-in that would land on a
+/// blank gap is refused (checks visible markers' `data-d`), so you stop at the
+/// tightest populated view; pans clamp to the data range; fully zoomed out, a
+/// downward scroll lets the page scroll. `cur` re-syncs from the rendered window
+/// on settle, so the tab/date-box swaps stay in step. Init is deferred to
+/// `DOMContentLoaded` because htmx loads with `defer`.
 const WHEEL_ZOOM_JS: &str = r#"
 (function(){
-  // htmx.min.js loads with `defer`, so it isn't ready while this inline script
-  // runs during parse. Wait for DOMContentLoaded (fires after deferred scripts)
-  // before wiring up, or window.htmx would be undefined and we'd bail silently.
   function init(){
     var z=document.getElementById('tl-zoom'); if(!z||!window.htmx) return;
-    var DAY=86400000, base=z.dataset.base, busy=false;
+    var DAY=86400000, base=z.dataset.base;
+    var cur=null, mn, mx, busy=false, pending=false, last='';
     function ms(s){ return Date.parse(s); }
     function iso(m){ return new Date(m).toISOString().slice(0,10); }
-    z.addEventListener('htmx:afterSettle', function(){ busy=false; });
+    function key(){ return cur ? iso(cur.a)+'|'+iso(cur.b) : ''; }
+    function sync(){
+      var inner=document.getElementById('tl-inner'); if(!inner) return;
+      var a=ms(inner.dataset.start), b=ms(inner.dataset.end);
+      if(!isNaN(a)&&!isNaN(b)){ cur={a:a,b:b}; last=key(); }
+      mn=ms(z.dataset.min); mx=ms(z.dataset.max);
+    }
+    function send(){
+      if(!cur) return;
+      var k=key(); if(k===last) return;            // no day-level change yet
+      if(busy){ pending=true; return; }            // coalesce: one request in flight
+      busy=true; last=k;
+      var url=base+(base.indexOf('?')>=0?'&':'?')+'from='+iso(cur.a)+'&to='+iso(cur.b);
+      window.htmx.ajax('GET', url, {target:'#tl-inner', swap:'outerHTML'});
+    }
+    sync();
+    z.addEventListener('htmx:afterSettle', function(){
+      busy=false;
+      if(pending){ pending=false; send(); }        // flush the latest gesture window
+      else sync();                                 // adopt the rendered window (tabs/date too)
+    });
+    function px(e,d){ return e.deltaMode===1 ? d*16 : e.deltaMode===2 ? d*400 : d; }
     z.addEventListener('wheel', function(e){
       var inner=document.getElementById('tl-inner'); if(!inner) return;
       // The empty-state has no [data-tl-band]; fall back to #tl-inner so the
-      // wheel still works there and the user can always zoom back out.
-      var band=z.querySelector('[data-tl-band]')||inner;
-      var br=band.getBoundingClientRect();
-      if(e.clientY < br.top-28 || e.clientY > br.bottom+28) return;   // not over the strip: page scrolls
-      var s=ms(inner.dataset.start), en=ms(inner.dataset.end), mn=ms(z.dataset.min), mx=ms(z.dataset.max);
-      if(isNaN(s)||isNaN(en)) return;
-      var span=en-s, full=Math.max(DAY, mx-mn);
-      if(e.deltaY>0 && span>=full) return;                           // fully out: page scrolls
-      e.preventDefault();
-      if(busy) return;
-      var tf=Math.min(1, Math.max(0, ((e.clientX-br.left)/Math.max(1,br.width)-0.04)/0.92));
-      var focal=s+tf*span;
-      var ns=e.deltaY<0 ? span*0.8 : span/0.8;                       // gentler than 0.6: ~25%/tick
-      ns=Math.min(full, Math.max(21*DAY, ns));
-      var a,b;
-      // Pure cursor-centred: the date under the pointer keeps the same fraction
-      // of the window, so it stays put. We deliberately DON'T shift the window
-      // back inside [mn,mx] near the edges (that drifts the cursored date) — the
-      // span is already capped at the data range, and the zoom-in gap-check
-      // below stops us drifting into empty space.
-      if(ns>=full){ a=mn; b=mx; }
-      else { a=Math.round(focal-tf*ns); b=a+ns; }
-      // Zoom-in: refuse a step that would land on a blank gap. Every visible
-      // marker carries its date in data-d, and a zoom-in window is always a
-      // subset of the current one, so if no marker falls inside [a,b] the new
-      // window is empty — stay put at the tightest populated view.
-      if(e.deltaY<0){
-        var hit=false, dots=inner.querySelectorAll('[data-d]');
-        for(var i=0;i<dots.length;i++){ var dm=ms(dots[i].dataset.d); if(dm>=a&&dm<=b){hit=true;break;} }
-        if(!hit) return;
+      // wheel still works there and you can always zoom back out.
+      var band=z.querySelector('[data-tl-band]')||inner, br=band.getBoundingClientRect();
+      if(e.clientY < br.top-28 || e.clientY > br.bottom+28) return;   // off the strip: page scrolls
+      if(!cur) sync(); if(!cur) return;
+      var full=Math.max(DAY, mx-mn), span=cur.b-cur.a;
+      var dx=px(e,e.deltaX), dy=px(e,e.deltaY);
+      if(Math.abs(dx) > Math.abs(dy)){
+        // Horizontal → pan. Scroll right (dx>0) shifts the window to later dates.
+        e.preventDefault();
+        var shift=dx/Math.max(1,br.width)*span;
+        cur.a+=shift; cur.b+=shift;
+        if(cur.a<mn){ cur.a=mn; cur.b=mn+span; }
+        if(cur.b>mx){ cur.b=mx; cur.a=mx-span; }
+      } else {
+        // Vertical → zoom about the cursor. Up (dy<0) in, down (dy>0) out.
+        if(dy>0 && span>=full) return;                                // fully out: page scrolls
+        e.preventDefault();
+        var tf=Math.min(1, Math.max(0, ((e.clientX-br.left)/Math.max(1,br.width)-0.04)/0.92));
+        var focal=cur.a+tf*span;
+        var ns=Math.min(full, Math.max(14*DAY, span*Math.pow(2, dy/400)));
+        if(dy<0 && ns>=span) return;                                  // already at max zoom-in
+        if(ns>=full){ cur.a=mn; cur.b=mx; }
+        else {
+          var a=focal-tf*ns, b=a+ns;
+          if(ns<span){                                                // zoom-in: skip blank gaps
+            var hit=false, dots=inner.querySelectorAll('[data-d]');
+            for(var i=0;i<dots.length;i++){ var dm=ms(dots[i].dataset.d); if(dm>=a&&dm<=b){hit=true;break;} }
+            if(!hit) return;
+          }
+          cur.a=a; cur.b=b;
+        }
       }
-      busy=true; setTimeout(function(){busy=false;},400);
-      var url=base+(base.indexOf('?')>=0?'&':'?')+'from='+iso(a)+'&to='+iso(b);
-      window.htmx.ajax('GET', url, {target:'#tl-inner', swap:'outerHTML'});
+      send();
     }, {passive:false});
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init);
