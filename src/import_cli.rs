@@ -82,13 +82,14 @@ pub async fn run(argv: &[String]) -> R<()> {
         total.allergies += c.allergies;
         total.medications += c.medications;
         total.conditions += c.conditions;
+        total.incidents += c.incidents;
         total.immunizations += c.immunizations;
         total.observations += c.observations;
         total.skipped += c.skipped;
     }
     eprintln!(
-        "\n✓ imported: {} allergies · {} meds · {} conditions · {} immunizations · {} observations",
-        total.allergies, total.medications, total.conditions, total.immunizations, total.observations
+        "\n✓ imported: {} allergies · {} meds · {} conditions · {} incidents · {} immunizations · {} observations",
+        total.allergies, total.medications, total.conditions, total.incidents, total.immunizations, total.observations
     );
     if total.warnings.is_empty() {
         eprintln!("  fidelity: clean (no warnings)");
@@ -201,6 +202,7 @@ fn print_preview(p: &importer::Preview) {
     eprintln!("  allergies      {}", p.counts.allergies);
     eprintln!("  medications    {}", p.counts.medications);
     eprintln!("  conditions     {}", p.counts.conditions);
+    eprintln!("  incidents      {}", p.counts.incidents);
     eprintln!("  immunizations  {}", p.counts.immunizations);
     eprintln!("  observations   {}  ({} labs, {} vitals)", p.counts.observations, p.labs, p.vitals);
     eprintln!("───────────────────────────────────────────────");
