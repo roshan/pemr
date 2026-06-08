@@ -78,6 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = Router::<handlers::AppState>::new()
         .route("/", get(handlers::dashboard::index))
         .route("/timeline", get(handlers::dashboard::timeline_page))
+        .route("/timeline/day", get(handlers::dashboard::timeline_day))
         .route("/healthz", get(handlers::dashboard::healthz))
         .route("/search", get(handlers::search::search))
         // incidents

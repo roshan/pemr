@@ -75,7 +75,7 @@ pub fn dashboard_page(
                 (c::section_heading("Timeline"))
                 (c::link_subtle(format!("/subjects/{}/timeline", subject.id), "Open full timeline →"))
             }
-            (dashboard::timeline_widget(timeline, data.subjects, false))
+            (dashboard::timeline_widget(timeline, false))
         }
         (inner)
     };
