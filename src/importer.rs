@@ -20,6 +20,7 @@ pub struct Counts {
     pub allergies: i64,
     pub medications: i64,
     pub conditions: i64,
+    pub incidents: i64,
     pub immunizations: i64,
     pub observations: i64,
     pub skipped: i64,
@@ -143,12 +144,48 @@ pub async fn import_fhir(
             "Condition" => {
                 let (name, code, system) = r.get("code").map(codeable).unwrap_or((None, None, None));
                 let name = name.unwrap_or_else(|| "Unknown condition".into());
+                let cs = code_system_label(system.as_deref(), &code);
+                let onset = str_at(r, "onsetDateTime").and_then(fhir_date);
+                // A delivery/birth is a real-world event, not a chronic condition.
+                if is_birth_event(&name, code.as_deref()) {
+                    let existing: Option<Uuid> = sqlx::query_scalar(
+                        "select id from incidents where subject_id=$1 and lower(title)=lower($2)
+                           and occurred_at is not distinct from $3 limit 1",
+                    )
+                    .bind(subject_id).bind(&name).bind(onset).fetch_optional(pool).await?;
+                    if existing.is_none() {
+                        sqlx::query(
+                            "insert into incidents (id, subject_id, title, narrative, occurred_at, occurred_precision)
+                             values ($1,$2,$3,'',$4,'day')",
+                        )
+                        .bind(Uuid::now_v7()).bind(subject_id).bind(&name).bind(onset)
+                        .execute(pool).await?;
+                    }
+                    c.incidents += 1;
+                    continue;
+                }
                 let status = match clinical_status(r).as_deref() {
                     Some("resolved") => "resolved",
                     Some("remission") => "remission",
                     _ => "active",
                 };
-                let onset = str_at(r, "onsetDateTime").and_then(fhir_date);
+                // Dedup chronic problems by code (same problem, different visit id).
+                if let Some(codev) = &code {
+                    let existing: Option<Uuid> = sqlx::query_scalar(
+                        "select id from conditions where subject_id=$1 and code=$2
+                           and code_system is not distinct from $3 limit 1",
+                    )
+                    .bind(subject_id).bind(codev).bind(&cs).fetch_optional(pool).await?;
+                    if let Some(id) = existing {
+                        sqlx::query(
+                            "update conditions set name=$2, status=$3,
+                               onset_date=coalesce($4, onset_date), updated_at=now() where id=$1",
+                        )
+                        .bind(id).bind(&name).bind(status).bind(onset).execute(pool).await?;
+                        c.conditions += 1;
+                        continue;
+                    }
+                }
                 sqlx::query(&format!(
                     "insert into conditions (id, subject_id, name, code, code_system, status, onset_date, source_id, external_id)
                      values ($1,$2,$3,$4,$5,$6,$7,$8,$9){ON_CONFLICT}
@@ -156,7 +193,7 @@ pub async fn import_fhir(
                         status=excluded.status, onset_date=excluded.onset_date, updated_at=now()"
                 ))
                 .bind(Uuid::now_v7()).bind(subject_id).bind(&name).bind(&code)
-                .bind(code_system_label(system.as_deref(), &code)).bind(status).bind(onset)
+                .bind(&cs).bind(status).bind(onset)
                 .bind(source_id).bind(&ext_id)
                 .execute(pool).await?;
                 c.conditions += 1;
@@ -331,6 +368,9 @@ enum CItem {
         status: Option<String>,
         onset: Option<Date>,
     },
+    /// A real-world event Epic filed in the problem list (e.g. a delivery) —
+    /// routed to an incident rather than a chronic condition.
+    Incident { title: String, occurred: Option<Date> },
     Immunization {
         vaccine: String,
         code: Option<String>,
@@ -351,6 +391,25 @@ enum CItem {
         effective: Date,
         category: &'static str,
     },
+}
+
+/// True if a "problem" is really a delivery/birth *event*, not a chronic
+/// condition. Epic files the delivery in the OB problem list; we route those to
+/// an incident instead. Matched by well-known SNOMED delivery codes or by name
+/// (a problem-list "delivery"/"cesarean" is childbirth).
+fn is_birth_event(name: &str, code: Option<&str>) -> bool {
+    const DELIVERY_CODES: &[&str] = &[
+        "289259007", // Vaginal delivery
+        "11466000",  // Cesarean section
+        "177184002", // Normal delivery procedure
+    ];
+    if let Some(c) = code {
+        if DELIVERY_CODES.contains(&c) {
+            return true;
+        }
+    }
+    let n = name.to_lowercase();
+    n.contains("delivery") || n.contains("cesarean") || n.contains("caesarean") || n.contains("c-section")
 }
 
 /// First 8 chars (`YYYYMMDD`) of an HL7 timestamp → `Date`.
@@ -722,17 +781,24 @@ fn parse_ccda(xml: &str) -> (Vec<(String, CItem)>, ParseStats) {
                         })
                         .and_then(ccda_date);
                     let ext_id = entry_id(obs).unwrap_or_else(|| hid("cond", &name));
-                    out.push((
-                        ext_id,
+                    let code = value.and_then(|v| v.attribute("code")).map(str::to_string);
+                    let code_system =
+                        value.and_then(|v| norm_system(v.attribute("codeSystemName")));
+                    // Epic files the delivery itself in the problem list — a
+                    // delivery/birth is a real-world event, not a chronic
+                    // condition, so route it to an incident.
+                    let item = if is_birth_event(&name, code.as_deref()) {
+                        CItem::Incident { title: name, occurred: onset }
+                    } else {
                         CItem::Condition {
                             name,
-                            code: value.and_then(|v| v.attribute("code")).map(str::to_string),
-                            code_system: value
-                                .and_then(|v| norm_system(v.attribute("codeSystemName"))),
+                            code,
+                            code_system,
                             status: condition_status(obs),
                             onset,
-                        },
-                    ));
+                        }
+                    };
+                    out.push((ext_id, item));
                 }
             }
             // Immunizations — CVX code present, name via originalText/narrative.
@@ -908,6 +974,27 @@ async fn upsert_item(
             // conditions.status is NOT NULL (default 'active'); Epic omits the
             // status observation on some problems, so fall back rather than NULL.
             let status = status.unwrap_or_else(|| "active".to_string());
+            // Dedup chronic problems by code: the same problem recurs across
+            // visit documents with a different HL7 entry-id, so when it's coded,
+            // key on (subject, code, code_system) and update in place rather than
+            // insert a duplicate.
+            if let Some(code) = &code {
+                let existing: Option<Uuid> = sqlx::query_scalar(
+                    "select id from conditions where subject_id=$1 and code=$2
+                       and code_system is not distinct from $3 limit 1",
+                )
+                .bind(subject_id).bind(code).bind(&code_system)
+                .fetch_optional(&mut *conn).await?;
+                if let Some(id) = existing {
+                    sqlx::query(
+                        "update conditions set name=$2, status=$3,
+                           onset_date=coalesce($4, onset_date), updated_at=now() where id=$1",
+                    )
+                    .bind(id).bind(&name).bind(&status).bind(onset)
+                    .execute(&mut *conn).await?;
+                    return Ok(());
+                }
+            }
             sqlx::query(&format!(
                 "insert into conditions (id, subject_id, name, code, code_system, status, onset_date, source_id, external_id)
                  values ($1,$2,$3,$4,$5,$6,$7,$8,$9){ON_CONFLICT}
@@ -916,6 +1003,25 @@ async fn upsert_item(
             ))
             .bind(Uuid::now_v7()).bind(subject_id).bind(&name).bind(&code).bind(&code_system)
             .bind(&status).bind(onset).bind(source_id).bind(ext_id).execute(&mut *conn).await?;
+        }
+        CItem::Incident { title, occurred } => {
+            // Incidents carry no provenance (source_id/external_id) by schema
+            // design, so dedup on content: same subject + title + date = same
+            // event, idempotent across re-imports.
+            let existing: Option<Uuid> = sqlx::query_scalar(
+                "select id from incidents where subject_id=$1 and lower(title)=lower($2)
+                   and occurred_at is not distinct from $3 limit 1",
+            )
+            .bind(subject_id).bind(&title).bind(occurred)
+            .fetch_optional(&mut *conn).await?;
+            if existing.is_none() {
+                sqlx::query(
+                    "insert into incidents (id, subject_id, title, narrative, occurred_at, occurred_precision)
+                     values ($1,$2,$3,'',$4,'day')",
+                )
+                .bind(Uuid::now_v7()).bind(subject_id).bind(&title).bind(occurred)
+                .execute(&mut *conn).await?;
+            }
         }
         CItem::Immunization { vaccine, code, code_system, occurred } => {
             sqlx::query(&format!(
@@ -952,6 +1058,7 @@ fn tally(c: &mut Counts, item: &CItem) {
         CItem::Allergy { .. } => c.allergies += 1,
         CItem::Medication { .. } => c.medications += 1,
         CItem::Condition { .. } => c.conditions += 1,
+        CItem::Incident { .. } => c.incidents += 1,
         CItem::Immunization { .. } => c.immunizations += 1,
         CItem::Observation { .. } => c.observations += 1,
     }
@@ -962,6 +1069,7 @@ fn category_label(item: &CItem) -> &'static str {
         CItem::Allergy { .. } => "allergies",
         CItem::Medication { .. } => "medications",
         CItem::Condition { .. } => "conditions",
+        CItem::Incident { .. } => "incidents",
         CItem::Immunization { .. } => "immunizations",
         CItem::Observation { category, .. } => {
             if *category == "vital" { "vitals" } else { "labs" }
@@ -1076,6 +1184,10 @@ pub fn preview_ccda_docs(xmls: &[String]) -> Preview {
                 "condition  {name}{}{}",
                 status.as_deref().map(|s| format!(" [{s}]")).unwrap_or_default(),
                 onset.map(|d| format!(" ({d})")).unwrap_or_default(),
+            ),
+            CItem::Incident { title, occurred } => format!(
+                "incident   {title}{}",
+                occurred.map(|d| format!(" ({d})")).unwrap_or_default(),
             ),
             CItem::Immunization { vaccine, occurred, .. } => format!(
                 "immun      {vaccine}{}",
