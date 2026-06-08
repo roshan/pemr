@@ -262,9 +262,14 @@ pub fn timeline_widget(data: &TimelineData, tabs: bool) -> Markup {
         div class="flex flex-wrap gap-3 mb-2" {
             @for k in TIMELINE_KINDS { (c::timeline_legend_item(k)) }
         }
-        @if data.buckets.is_empty() {
-            (c::empty_state("No events in this window — zoom out for more history."))
+        @if data.start.is_empty() {
+            // No events at all for this subject — there's no time axis to draw.
+            (c::empty_state("No events yet."))
         } @else {
+            // Always render the band (even when this window has no events) so the
+            // wheel handler's geometry stays stable and pan/zoom keep working —
+            // an empty window just shows the axis plus a faint note, never swaps
+            // the band away.
             (c::timeline_band(html! {
                 @for (pct, label) in &data.ticks { (c::timeline_tick(*pct, label)) }
                 @for b in &data.buckets {
@@ -275,6 +280,7 @@ pub fn timeline_widget(data: &TimelineData, tabs: bool) -> Markup {
                     @let aria = format!("{d} · {n} event{}", if n == 1 { "" } else { "s" });
                     (c::timeline_marker(b.pct, &d, &b.kind, n, &day_detail_url(data.subject, &lo, &hi), &aria))
                 }
+                @if data.buckets.is_empty() { (c::timeline_band_empty_note()) }
             }))
         }
         // NOTE: the `#tl-detail` panel is intentionally NOT here — it lives
