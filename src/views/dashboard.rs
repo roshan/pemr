@@ -277,10 +277,11 @@ pub fn timeline_widget(data: &TimelineData, tabs: bool) -> Markup {
                 }
             }))
         }
-        // Persistent panel: a marker click hx-swaps its events in here, so the
-        // list stays open to click through. Lives inside #tl-inner, so it resets
-        // when the window changes (zoom / tab / date box).
-        div id="tl-detail" class="mt-4" { (c::timeline_detail_hint()) }
+        // NOTE: the `#tl-detail` panel is intentionally NOT here — it lives
+        // OUTSIDE this widget (and outside the swappable `#tl-inner`), so a
+        // marker click's event list persists across zoom/tab/date changes and
+        // sits as its own block below the timeline. See `visual_timeline` (full
+        // page) and the subject embed.
     }
 }
 
@@ -406,6 +407,10 @@ pub fn visual_timeline(nav: &Nav<'_>, data: &TimelineData) -> Markup {
         div id="tl-zoom" data-base=(base) data-min=(data.min) data-max=(data.max) {
             (timeline_inner(data))
         }
+        // The detail panel sits OUTSIDE #tl-zoom: a marker click hx-swaps its
+        // events in here, and because it isn't part of the zoomable #tl-inner it
+        // persists across zoom/tab/date changes as its own block below.
+        div id="tl-detail" class="mt-6" { (c::timeline_detail_hint()) }
         script { (PreEscaped(WHEEL_ZOOM_JS)) }
     };
     shell(nav, body)
