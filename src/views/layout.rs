@@ -65,7 +65,7 @@ fn top_bar(nav: &Nav<'_>) -> Markup {
                 }
                 nav class="flex items-center gap-1 text-sm" {
                     (subject_switcher(nav))
-                    (nav_link("/incidents", "Incidents", nav.current_path))
+                    (nav_link("/incidents", "Events", nav.current_path))
                     (nav_link("/records",   "Records",   nav.current_path))
                     (nav_link("/sources",   "Sources",   nav.current_path))
                     (nav_link("/providers", "Providers", nav.current_path))
@@ -167,6 +167,23 @@ pub fn render_date(d: Option<time::Date>, precision: &str) -> String {
             "month" => format!("{}-{:02}", d.year(), u8::from(d.month())),
             _ => format!("{}-{:02}-{:02}", d.year(), u8::from(d.month()), d.day()),
         },
+    }
+}
+
+/// Format an event's date span: a single date when there's no end (or the end
+/// equals the start), otherwise `start – end`. Used for events (incidents) that
+/// may run multiple days, e.g. a hospital stay.
+pub fn render_date_range(
+    start: Option<time::Date>,
+    start_precision: &str,
+    end: Option<time::Date>,
+    end_precision: &str,
+) -> String {
+    match end {
+        Some(e) if Some(e) != start => {
+            format!("{} – {}", render_date(start, start_precision), render_date(Some(e), end_precision))
+        }
+        _ => render_date(start, start_precision),
     }
 }
 

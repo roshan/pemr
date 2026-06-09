@@ -66,7 +66,7 @@ async fn search_incidents(
 ) -> Result<Vec<Incident>, sqlx::Error> {
     sqlx::query_as::<_, Incident>(
         "select id, subject_id, title, narrative, occurred_at, occurred_precision,
-                created_at, updated_at
+                ended_at, ended_precision, created_at, updated_at
            from incidents
           where search_tsv @@ websearch_to_tsquery('english', $1)
             and ($2::uuid is null or subject_id = $2)

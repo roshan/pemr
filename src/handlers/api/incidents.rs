@@ -26,7 +26,7 @@ pub async fn list(
     let offset = q.offset.unwrap_or(0).max(0);
     let rows = sqlx::query_as::<_, Incident>(
         "select id, subject_id, title, narrative, occurred_at, occurred_precision,
-                created_at, updated_at
+                ended_at, ended_precision, created_at, updated_at
            from incidents
           where ($1::uuid is null or subject_id = $1)
           order by occurred_at desc nulls last, created_at desc
@@ -54,7 +54,7 @@ pub async fn detail(
 ) -> ApiResult<Json<IncidentDetail>> {
     let incident = sqlx::query_as::<_, Incident>(
         "select id, subject_id, title, narrative, occurred_at, occurred_precision,
-                created_at, updated_at
+                ended_at, ended_precision, created_at, updated_at
            from incidents where id = $1",
     )
     .bind(id)

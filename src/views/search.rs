@@ -22,7 +22,7 @@ pub fn results_partial(r: &SearchResults<'_>) -> Markup {
             (c::empty_state(html! { "No matches for " (c::code(q)) "." }))
         }
         @if !r.incidents.is_empty() {
-            (c::subheading("Incidents"))
+            (c::subheading("Events"))
             ul class="space-y-1.5" {
                 @for inc in r.incidents {
                     li class="flex items-center gap-2 text-sm" {

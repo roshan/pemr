@@ -83,7 +83,7 @@ pub fn detail_page(
         }))
 
         (c::lane(
-            html! { (c::section_heading("Incidents from this source")) },
+            html! { (c::section_heading("Events from this source")) },
             html! {
                 @if incidents.is_empty() { (c::empty_state("None.")) }
                 @else {

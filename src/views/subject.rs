@@ -14,7 +14,7 @@ pub fn list_page(nav: &Nav<'_>, subjects: &[Subject], counts: &[(uuid::Uuid, i64
         (c::data_table(
             html! { tr {
                 (c::th("Name")) (c::th("DOB")) (c::th("Email (CF Access)"))
-                (c::th("Incidents")) (c::th("Records")) (c::th(""))
+                (c::th("Events")) (c::th("Records")) (c::th(""))
             }},
             html! {
                 @for s in subjects {
