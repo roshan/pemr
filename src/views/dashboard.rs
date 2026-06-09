@@ -13,6 +13,19 @@ pub struct TimelineEvent {
     pub title: String,
     pub href: Option<String>,
     pub subject_id: Uuid,
+    /// End of a multi-day event (an event/incident with `ended_at`); `None` for
+    /// point-in-time events. When set and after `date`, it renders as a span bar.
+    pub end_date: Option<Date>,
+}
+
+/// A multi-day event rendered as a bar spanning `start_pct`..`end_pct` of the
+/// band, instead of a dot.
+pub struct TimelineSpan {
+    pub start_pct: f64,
+    pub end_pct: f64,
+    pub kind: String,
+    pub title: String,
+    pub href: Option<String>,
 }
 
 /// All events on one calendar day, positioned at `pct` along the axis.
@@ -32,6 +45,7 @@ pub struct TimelineData {
     pub max: String,
     pub ticks: Vec<(f64, String)>, // month/year axis labels at their pct
     pub buckets: Vec<TimelineBucket>,
+    pub spans: Vec<TimelineSpan>, // multi-day events drawn as bars
     pub subject: Option<Uuid>,
 }
 
@@ -272,6 +286,9 @@ pub fn timeline_widget(data: &TimelineData, tabs: bool) -> Markup {
             // the band away.
             (c::timeline_band(html! {
                 @for (pct, label) in &data.ticks { (c::timeline_tick(*pct, label)) }
+                @for s in &data.spans {
+                    (c::timeline_span_bar(s.start_pct, s.end_pct - s.start_pct, &s.kind, &s.title, s.href.as_deref()))
+                }
                 @for b in &data.buckets {
                     @let d = b.date.to_string();
                     @let lo = b.events.first().map(|e| e.date.to_string()).unwrap_or_else(|| d.clone());
@@ -280,7 +297,7 @@ pub fn timeline_widget(data: &TimelineData, tabs: bool) -> Markup {
                     @let aria = format!("{d} · {n} event{}", if n == 1 { "" } else { "s" });
                     (c::timeline_marker(b.pct, &d, &b.kind, n, &day_detail_url(data.subject, &lo, &hi), &aria))
                 }
-                @if data.buckets.is_empty() { (c::timeline_band_empty_note()) }
+                @if data.buckets.is_empty() && data.spans.is_empty() { (c::timeline_band_empty_note()) }
             }))
         }
         // NOTE: the `#tl-detail` panel is intentionally NOT here — it lives
