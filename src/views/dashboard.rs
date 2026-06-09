@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::models::{Incident, Record, Subject, is_image_kind, record_kind_label};
 use crate::views::components as c;
-use crate::views::layout::{Nav, render_date, shell, subject_badge};
+use crate::views::layout::{Nav, render_date, render_date_range, shell, subject_badge};
 
 /// One dated thing on the timeline (incident, record, condition, …).
 pub struct TimelineEvent {
@@ -58,7 +58,7 @@ pub fn body(nav: &Nav<'_>, data: &DashboardData<'_>) -> Markup {
             form action="/" method="get" class="space-y-2" {
                 (c::input_search(
                     "q",
-                    "Search incidents and records…",
+                    "Search events and records…",
                     "/search",
                     "#results",
                     "[name=subject]",
@@ -74,14 +74,14 @@ pub fn body(nav: &Nav<'_>, data: &DashboardData<'_>) -> Markup {
 
         (c::lane(
             html! {
-                (c::section_heading("Recent incidents"))
+                (c::section_heading("Recent events"))
                 a href=(list_url("/incidents", nav.current_subject))
                   class="text-xs text-muted hover:text-brand" { "View all →" }
             },
             html! {
                 @if data.recent_incidents.is_empty() {
                     (c::empty_state(html! {
-                        "No incidents yet. "
+                        "No events yet. "
                         a href=(new_incident_url(nav)) class="text-brand" { "Add one" } "."
                     }))
                 } @else {
@@ -91,7 +91,7 @@ pub fn body(nav: &Nav<'_>, data: &DashboardData<'_>) -> Markup {
                                 (c::card_title(format!("/incidents/{}", inc.id), &inc.title))
                                 (c::meta_row(html! {
                                     (subject_badge(data.subjects, inc.subject_id))
-                                    (c::badge_neutral(render_date(inc.occurred_at, &inc.occurred_precision)))
+                                    (c::badge_neutral(render_date_range(inc.occurred_at, &inc.occurred_precision, inc.ended_at, &inc.ended_precision)))
                                 }))
                                 @if !inc.narrative.is_empty() {
                                     p class="mt-2 text-sm text-ink/80 line-clamp-3" { (inc.narrative) }
@@ -126,7 +126,7 @@ pub fn body(nav: &Nav<'_>, data: &DashboardData<'_>) -> Markup {
         ))
 
         section class="flex flex-wrap gap-2 pt-2" {
-            (c::button_link_primary(new_incident_url(nav), "New incident"))
+            (c::button_link_primary(new_incident_url(nav), "New event"))
             (c::button_link_secondary(new_record_url(nav), "New record"))
             (c::button_link_secondary("/sources", "Manage sources"))
         }

@@ -402,7 +402,7 @@ async fn recent_incidents(
 ) -> Result<Vec<Incident>, sqlx::Error> {
     sqlx::query_as::<_, Incident>(
         "select id, subject_id, title, narrative, occurred_at, occurred_precision,
-                created_at, updated_at
+                ended_at, ended_precision, created_at, updated_at
            from incidents
           where ($1::uuid is null or subject_id = $1)
           order by created_at desc

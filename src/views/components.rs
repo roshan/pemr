@@ -442,7 +442,7 @@ fn timeline_kind_color(kind: &str) -> &'static str {
 
 pub fn timeline_kind_label(kind: &str) -> &'static str {
     match kind {
-        "incident" => "Incident",
+        "incident" => "Event",
         "record" => "Record",
         "condition" => "Condition",
         "immunization" => "Immunization",

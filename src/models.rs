@@ -46,6 +46,15 @@ pub struct Incident {
     pub narrative: String,
     pub occurred_at: Option<Date>,
     pub occurred_precision: String,
+    /// Optional end of a multi-day event (a hospital stay, a trip). Null = a
+    /// point-in-time event. `#[sqlx(default)]` so older SELECTs that don't list
+    /// these columns still map (they just come back null/"day") instead of
+    /// failing at runtime.
+    #[sqlx(default)]
+    pub ended_at: Option<Date>,
+    #[sqlx(default)]
+    #[serde(default)]
+    pub ended_precision: String,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]

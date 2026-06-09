@@ -14,7 +14,7 @@ use crate::views::incident;
 use crate::views::layout::Nav;
 
 const INCIDENT_COLS: &str = "id, subject_id, title, narrative, occurred_at, occurred_precision,
-                              created_at, updated_at";
+                              ended_at, ended_precision, created_at, updated_at";
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListQuery {
@@ -57,7 +57,7 @@ async fn list_render(
     .await?;
 
     let nav = Nav {
-        title: "Incidents",
+        title: "Events",
         current_path: "/incidents",
         subjects: &subjects,
         current_subject: subject,
@@ -98,6 +98,9 @@ pub struct CreateForm {
     pub title: String,
     #[serde(default)]
     pub occurred_at: String,
+    /// Optional end date for a multi-day event (hospital stay, trip).
+    #[serde(default)]
+    pub ended_at: String,
     #[serde(default)]
     pub narrative: String,
 }
@@ -113,17 +116,24 @@ pub async fn create(
         return Err(AppError::BadRequest("title is required".into()));
     }
     let occurred_at = parse_date(&form.occurred_at).map_err(AppError::BadRequest)?;
+    let ended_at = parse_date(&form.ended_at).map_err(AppError::BadRequest)?;
+    if let (Some(s), Some(e)) = (occurred_at, ended_at) {
+        if e < s {
+            return Err(AppError::BadRequest("end date is before the start date".into()));
+        }
+    }
     let id = Uuid::now_v7();
 
     sqlx::query(
-        "insert into incidents (id, subject_id, title, narrative, occurred_at)
-         values ($1,$2,$3,$4,$5)",
+        "insert into incidents (id, subject_id, title, narrative, occurred_at, ended_at)
+         values ($1,$2,$3,$4,$5,$6)",
     )
     .bind(id)
     .bind(subject_id)
     .bind(&title)
     .bind(form.narrative)
     .bind(occurred_at)
+    .bind(ended_at)
     .execute(&state.pool)
     .await?;
 
@@ -235,12 +245,19 @@ pub async fn edit(
         return Err(AppError::BadRequest("title is required".into()));
     }
     let occurred_at = parse_date(&form.occurred_at).map_err(AppError::BadRequest)?;
+    let ended_at = parse_date(&form.ended_at).map_err(AppError::BadRequest)?;
+    if let (Some(s), Some(e)) = (occurred_at, ended_at) {
+        if e < s {
+            return Err(AppError::BadRequest("end date is before the start date".into()));
+        }
+    }
     sqlx::query(
         "update incidents set
             subject_id  = $2,
             title       = $3,
             narrative   = $4,
             occurred_at = $5,
+            ended_at    = $6,
             updated_at  = now()
           where id = $1",
     )
@@ -249,6 +266,7 @@ pub async fn edit(
     .bind(&title)
     .bind(form.narrative)
     .bind(occurred_at)
+    .bind(ended_at)
     .execute(&state.pool)
     .await?;
     Ok(Redirect::to(&format!("/incidents/{id}")).into_response())

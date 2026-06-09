@@ -62,7 +62,7 @@ pub fn new_form(
         (c::form_multipart("/records", html! {
             @if let Some(id) = link_incident {
                 input type="hidden" name="link_incident" value=(id);
-                (c::alert_info(html! { "Will be linked to incident " (c::code(id.to_string())) "." }))
+                (c::alert_info(html! { "Will be linked to event " (c::code(id.to_string())) "." }))
             }
             (subject_select(subjects, selected_subject))
             (c::field("Kind", c::select_field("kind", true, || html! {
@@ -147,7 +147,7 @@ pub fn import_form(
             @if let Some(inc_id) = link_incident {
                 input type="hidden" name="link_incident" value=(inc_id);
                 (c::alert_info(html! {
-                    "All imported records will be linked to incident " (c::code(inc_id.to_string())) "."
+                    "All imported records will be linked to event " (c::code(inc_id.to_string())) "."
                 }))
             }
 
@@ -247,10 +247,10 @@ pub fn detail_page(
         }))
 
         (c::lane(
-            html! { (c::section_heading("Linked incidents")) },
+            html! { (c::section_heading("Linked events")) },
             html! {
                 @if linked_incidents.is_empty() {
-                    (c::empty_state("Not linked to any incident."))
+                    (c::empty_state("Not linked to any event."))
                 } @else {
                     ul class="space-y-1.5" {
                         @for inc in linked_incidents {

@@ -5,13 +5,13 @@ use crate::models::{
     Incident, Record, Source, Subject, is_image_kind, record_kind_label, source_kind_label,
 };
 use crate::views::components as c;
-use crate::views::layout::{Nav, render_date, shell, subject_badge};
+use crate::views::layout::{Nav, render_date, render_date_range, shell, subject_badge};
 
 pub fn list_page(nav: &Nav<'_>, incidents: &[Incident], subjects: &[Subject]) -> Markup {
     let body = html! {
         div class="flex items-center justify-between mb-4" {
-            (c::page_title("Incidents"))
-            (c::button_link_primary(new_url(nav.current_subject), "New incident"))
+            (c::page_title("Events"))
+            (c::button_link_primary(new_url(nav.current_subject), "New event"))
         }
         @if incidents.is_empty() {
             (c::empty_state("Nothing yet."))
@@ -25,7 +25,7 @@ pub fn list_page(nav: &Nav<'_>, incidents: &[Incident], subjects: &[Subject]) ->
                 html! {
                     @for inc in incidents {
                         tr class="hover:bg-slate-50" {
-                            (c::td(html! { (render_date(inc.occurred_at, &inc.occurred_precision)) }))
+                            (c::td(html! { (render_date_range(inc.occurred_at, &inc.occurred_precision, inc.ended_at, &inc.ended_precision)) }))
                             (c::td(subject_badge(subjects, inc.subject_id)))
                             (c::td(html! { a href={ "/incidents/" (inc.id) } { (inc.title) } }))
                         }
@@ -44,18 +44,20 @@ pub fn new_form(
     error: Option<&str>,
 ) -> Markup {
     let body = html! {
-        (c::page_title("New incident"))
+        (c::page_title("New event"))
         @if let Some(e) = error { (c::alert_danger(e)) }
         (c::alert_info(
-            "An incident is a real-world event (a fall, an ER visit, a surgery). \
-             Records and their EMR sources get attached afterwards."
+            "An event is a real-world happening (a hospital stay, a fall, an ER visit, a surgery). \
+             Give an end date for something that spans days. Records and their EMR sources get \
+             attached afterwards."
         ))
         (c::form("/incidents", "post", html! {
             (subject_select(subjects, selected_subject))
             (c::field("Title", c::input_text("title", "", true, Some(200))))
-            (c::field("When (date)", c::input_date("occurred_at", "")))
+            (c::field("Start date", c::input_date("occurred_at", "")))
+            (c::field("End date (optional)", c::input_date("ended_at", "")))
             (c::field("Narrative (markdown OK)", c::textarea_field("narrative", "", 8)))
-            (c::button_primary("Create incident"))
+            (c::button_primary("Create event"))
         }))
     };
     shell(nav, body)
@@ -77,7 +79,7 @@ pub fn detail_page(
             }
             (c::meta_row(html! {
                 (subject_badge(subjects, incident.subject_id))
-                (c::badge_neutral(render_date(incident.occurred_at, &incident.occurred_precision)))
+                (c::badge_neutral(render_date_range(incident.occurred_at, &incident.occurred_precision, incident.ended_at, &incident.ended_precision)))
             }))
             @if !touching_sources.is_empty() {
                 div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted" {
@@ -270,7 +272,7 @@ fn image_tile(incident: &Incident, rec: &Record) -> Markup {
             }
             button
                 type="button"
-                title="Unlink from this incident"
+                title="Unlink from this event"
                 hx-delete=(format!("/incidents/{}/records/{}", incident.id, rec.id))
                 hx-target="closest figure"
                 hx-swap="outerHTML"
@@ -297,14 +299,18 @@ pub fn edit_form(
     error: Option<&str>,
 ) -> Markup {
     let body = html! {
-        (c::page_title("Edit incident"))
+        (c::page_title("Edit event"))
         @if let Some(e) = error { (c::alert_danger(e)) }
         (c::form(format!("/incidents/{}/edit", incident.id), "post", html! {
             (subject_select(subjects, Some(incident.subject_id)))
             (c::field("Title", c::input_text("title", &incident.title, true, Some(200))))
-            (c::field("When", c::input_date(
+            (c::field("Start date", c::input_date(
                 "occurred_at",
                 &incident.occurred_at.map(|d| d.to_string()).unwrap_or_default(),
+            )))
+            (c::field("End date (optional)", c::input_date(
+                "ended_at",
+                &incident.ended_at.map(|d| d.to_string()).unwrap_or_default(),
             )))
             (c::field("Narrative", c::textarea_field("narrative", &incident.narrative, 10)))
             div class="flex gap-2" {
