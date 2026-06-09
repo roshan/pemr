@@ -66,7 +66,9 @@ pub fn dashboard_page(
     data: &DashboardData<'_>,
     timeline: &dashboard::TimelineData,
 ) -> Markup {
-    let inner = dashboard::body(nav, data);
+    // Skip the compact mini-timeline in the embedded body — the rich
+    // `timeline_widget` below already covers it (no two timelines on one page).
+    let inner = dashboard::body(nav, data, false);
     let body = html! {
         (bio_header(subject))
         (clinical_summary(summary))

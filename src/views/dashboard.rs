@@ -60,13 +60,14 @@ pub struct DashboardData<'a> {
 const DASHBOARD_TIMELINE_LIMIT: usize = 12;
 
 pub fn render(nav: &Nav<'_>, data: &DashboardData<'_>) -> Markup {
-    shell(nav, body(nav, data))
+    shell(nav, body(nav, data, true))
 }
 
 /// Inner body markup (search bar, timeline, recent lanes, action shortcuts).
-/// Reusable so the per-subject dashboard at `/subjects/{id}` can wrap it
-/// with a bio header.
-pub fn body(nav: &Nav<'_>, data: &DashboardData<'_>) -> Markup {
+/// Reusable so the per-subject dashboard at `/subjects/{id}` can wrap it with a
+/// bio header. `show_timeline` is false there because the subject page already
+/// renders the richer `timeline_widget` above — avoids two timelines on one page.
+pub fn body(nav: &Nav<'_>, data: &DashboardData<'_>, show_timeline: bool) -> Markup {
     html! {
         section class="mb-6" {
             form action="/" method="get" class="space-y-2" {
@@ -84,7 +85,9 @@ pub fn body(nav: &Nav<'_>, data: &DashboardData<'_>) -> Markup {
             div #results class="mt-3" {}
         }
 
-        (incidents_timeline(nav.current_subject, data.timeline_incidents, data.timeline_total))
+        @if show_timeline {
+            (incidents_timeline(nav.current_subject, data.timeline_incidents, data.timeline_total))
+        }
 
         (c::lane(
             html! {
