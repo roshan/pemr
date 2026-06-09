@@ -516,6 +516,32 @@ pub fn timeline_tick(left_pct: f64, label: impl Render) -> Markup {
     }
 }
 
+/// A multi-day event drawn as a horizontal bar on the axis, from `left_pct` for
+/// `width_pct` (floored so a short span stays visible). Clickable, with a
+/// truncated label above and the full title in the tooltip; sits below the dots
+/// (z-0) so a point event on the same day still shows on top.
+pub fn timeline_span_bar(
+    left_pct: f64,
+    width_pct: f64,
+    kind: &str,
+    title: &str,
+    href: Option<&str>,
+) -> Markup {
+    let style = format!("left:{:.3}%; width:{:.3}%", left_pct, width_pct.max(0.8));
+    let inner = html! {
+        span class="absolute bottom-full left-0 mb-0.5 inline-block max-w-32 truncate text-xs text-muted pointer-events-none" { (title) }
+        span class={ "block h-2 rounded-full opacity-60 " (timeline_kind_color(kind)) } {}
+    };
+    html! {
+        @match href {
+            Some(h) => a href=(h) title=(title)
+                class="group absolute top-6 -translate-y-1/2 z-0" style=(style) { (inner) },
+            None => div title=(title)
+                class="absolute top-6 -translate-y-1/2 z-0" style=(style) { (inner) },
+        }
+    }
+}
+
 /// A positioned, clickable event marker: a coloured dot (sized by count) on the
 /// axis. Clicking it — or activating it from the keyboard (it's a real
 /// `<button>`) — hx-gets that point's events into the persistent `#tl-detail`

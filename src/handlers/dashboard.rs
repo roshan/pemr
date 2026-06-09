@@ -132,23 +132,25 @@ async fn load_events(
     pool: &PgPool,
     subject: Option<Uuid>,
 ) -> Result<Vec<dashboard::TimelineEvent>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, (Date, String, String, String, Uuid)>(
-        "select occurred_at as d, 'incident' as kind, title as t, id::text as i, subject_id as s
+    // Only incidents (events) carry an end date; the other artifacts are points,
+    // so they project `null::date` to keep the union column-compatible.
+    let rows = sqlx::query_as::<_, (Date, String, String, String, Uuid, Option<Date>)>(
+        "select occurred_at as d, 'incident' as kind, title as t, id::text as i, subject_id as s, ended_at as e
            from incidents where occurred_at is not null and ($1::uuid is null or subject_id = $1)
          union all
-         select occurred_at, 'record', title, id::text, subject_id
+         select occurred_at, 'record', title, id::text, subject_id, null::date
            from records where occurred_at is not null and ($1::uuid is null or subject_id = $1)
          union all
-         select onset_date, 'condition', name, id::text, subject_id
+         select onset_date, 'condition', name, id::text, subject_id, null::date
            from conditions where onset_date is not null and ($1::uuid is null or subject_id = $1)
          union all
-         select occurred_at, 'immunization', vaccine, id::text, subject_id
+         select occurred_at, 'immunization', vaccine, id::text, subject_id, null::date
            from immunizations where occurred_at is not null and ($1::uuid is null or subject_id = $1)
          union all
-         select effective_on, 'observation', display, id::text, subject_id
+         select effective_on, 'observation', display, id::text, subject_id, null::date
            from observations where ($1::uuid is null or subject_id = $1)
          union all
-         select starts_at::date, 'appointment', title, id::text, subject_id
+         select starts_at::date, 'appointment', title, id::text, subject_id, null::date
            from appointments where ($1::uuid is null or subject_id = $1)
          order by d asc",
     )
@@ -158,14 +160,14 @@ async fn load_events(
 
     Ok(rows
         .into_iter()
-        .map(|(date, kind, title, id, sid)| {
+        .map(|(date, kind, title, id, sid, end_date)| {
             let href = match kind.as_str() {
                 "incident" => Some(format!("/incidents/{id}")),
                 "record" => Some(format!("/records/{id}")),
                 "appointment" => Some(format!("/appointments/{id}/edit")),
                 _ => Some(format!("/subjects/{sid}")),
             };
-            dashboard::TimelineEvent { date, kind, title, href, subject_id: sid }
+            dashboard::TimelineEvent { date, kind, title, href, subject_id: sid, end_date }
         })
         .collect())
 }
@@ -243,6 +245,7 @@ fn build_timeline_data(
             max: String::new(),
             ticks: vec![],
             buckets: vec![],
+            spans: vec![],
             subject,
         };
     }
@@ -284,8 +287,31 @@ fn build_timeline_data(
         }
     };
 
+    let pct = |d: Date| -> f64 {
+        (4.0 + (d - start).whole_days() as f64 / span * 92.0).clamp(4.0, 96.0)
+    };
+
+    // Multi-day events (an `ended_at` after the start) become bars; everything
+    // else is a point. A span shows if it overlaps the window, clamped to it.
+    let mut spans: Vec<dashboard::TimelineSpan> = Vec::new();
+    let mut points: Vec<dashboard::TimelineEvent> = Vec::new();
+    for e in events {
+        match e.end_date {
+            Some(ed) if ed > e.date && e.date <= end && ed >= start => {
+                spans.push(dashboard::TimelineSpan {
+                    start_pct: pct(e.date.max(start)),
+                    end_pct: pct(ed.min(end)),
+                    kind: e.kind.clone(),
+                    title: e.title.clone(),
+                    href: e.href.clone(),
+                });
+            }
+            _ => points.push(e),
+        }
+    }
+
     let mut buckets: Vec<dashboard::TimelineBucket> = Vec::new();
-    for e in events.into_iter().filter(|e| e.date >= start && e.date <= end) {
+    for e in points.into_iter().filter(|e| e.date >= start && e.date <= end) {
         let anchor = bucket(e.date);
         match buckets.last_mut() {
             Some(b) if b.date == anchor => b.events.push(e),
@@ -298,7 +324,7 @@ fn build_timeline_data(
         }
     }
     for b in &mut buckets {
-        b.pct = 4.0 + (b.date - start).whole_days() as f64 / span * 92.0;
+        b.pct = pct(b.date);
         b.kind = primary_kind(&b.events);
     }
 
@@ -310,6 +336,7 @@ fn build_timeline_data(
         max: max_d.to_string(),
         ticks: timeline_ticks(start, end),
         buckets,
+        spans,
         subject,
     }
 }
