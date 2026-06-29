@@ -54,3 +54,11 @@ dicom-pixeldata = { version = "0.8", default-features = false, features = ["imag
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 roxmltree = "0.20"
+
+# Background sync tasks (vaccine_records task and future tasks).
+# reqwest: async HTTP client for fetching CDPH Smart Health Card download URLs.
+# flate2: DEFLATE decompression for SHC JWS payloads (SMART Health Card spec §4).
+# base64: base64url decode for JWS header/payload segments.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip"] }
+flate2 = "1"
+base64 = "0.22"

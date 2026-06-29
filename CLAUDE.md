@@ -56,6 +56,9 @@ Durable project knowledge — overview, API reference, anything an agent would w
 | dicom-pixeldata | DICOM pixel data decoder | features = ["image","jpeg","rayon"]; pure Rust JPEG baseline + lossless |
 | image | PNG encoder | features = ["png"] only; everything else off |
 | roxmltree | read-only XML DOM for the C-CDA importer | pure Rust, no FFI/build.rs; used by `importer.rs` to parse MyChart C-CDA exports |
+| reqwest | async HTTP client for background sync tasks | features = ["rustls-tls","json","gzip"]; no native-tls/openssl. Used by `sync/vaccine.rs` to fetch CDPH SMART Health Card download URLs. |
+| flate2 | DEFLATE decompression | pure Rust (miniz_oxide backend); no FFI. Required by SHC JWS payload format (SMART Health Card §4 mandates DEFLATE-compressed FHIR bundle). |
+| base64 | base64url decoding | pure Rust; used to decode JWS header/payload segments in `sync/vaccine.rs`. |
 
 ### Vendored frontend assets
 
@@ -127,6 +130,25 @@ The `/records/import` form has **no subject / source / link-incident fields**. B
 2. **Zip upload** — a secondary plain `<input type="file" accept=".zip">`. Server-side `is_zip()` checks the first four bytes (`PK\x03\x04`) and `expand_zip()` walks entries via the synchronous `zip` crate, treating each entry as a candidate DICOM. We don't recurse zips-in-zips.
 
 Either path produces the same record set; the user can switch when one is being awkward in their browser.
+
+## Background sync (`src/sync/`)
+
+A small task-runner framework for periodic or on-demand syncs. Lives entirely in the same process — no external scheduler or queue.
+
+- **Framework** (`src/sync/mod.rs`): `TaskDef` (name + schedule_hours + `TaskFn` function pointer), `SyncJob` (DB row struct), `run_loop` (spawned at startup via `tokio::spawn`). The loop uses `tokio::select!` — a 60-second sleep tick checks due tasks; the `mpsc::Receiver<String>` branch handles on-demand triggers from `POST /settings/sync/:name/run`.
+- **DB state** (`sync_jobs` table, migration `0012`): one row per task — `name (PK)`, `schedule_hours`, `last_started_at`, `last_finished_at`, `last_status` (`ok|error|running`), `last_message`, `next_run_at`. The framework upserts rows at startup (`ON CONFLICT DO NOTHING`). `next_run_at` is bumped by `schedule_hours` at task-start so overlapping runs don't fire even if the task hangs.
+- **Trigger channel**: `AppState.sync_tx: mpsc::Sender<String>` (channel capacity 32). The sync handler sends the task name; the loop receives it and executes immediately.
+- **Adding a task**: (1) Write `src/sync/<name>.rs` with `pub async fn run(pool: PgPool) -> Result<String, String>`. (2) Add a `TaskDef` entry to `ALL_TASKS` in `src/sync/mod.rs`. That's it — the framework handles DB registration, scheduling, and status tracking.
+- **UI**: `GET /settings/sync` — status table + setup instructions. `POST /settings/sync/:name/run` — fires on-demand, redirects back.
+
+### Vaccine records task (`src/sync/vaccine.rs`)
+
+Syncs immunization records from California's immunization registry (CAIR) via the CDPH Digital Vaccine Record portal. Runs weekly.
+
+- **Per-subject setup**: Store the `.smart-health-card` download URL from `myvaccinerecord.cdph.ca.gov` in `subjects.cdph_shc_url` (migration `0013`). The user completes the OTP flow once, right-clicks the Download button, and copies the link. The task re-fetches this URL each run.
+- **What it does**: Fetches the SHC file (JSON with `verifiableCredential`), decodes the compact JWS (base64url + DEFLATE + FHIR R4 Bundle), extracts `Immunization` resources, upserts into `immunizations` keyed on `(source_id, external_id)` where `source_id` points to an auto-created "CA Immunization Registry (CAIR)" source.
+- **External ID format**: `shc_{cvx_code}_{occurrence_date}__{index}` — stable across re-syncs so re-fetching the same SHC is idempotent.
+- **HTML response**: If the stored URL returns HTML (e.g. the user pasted the page URL instead of the download URL), the task returns a clear error with instructions.
 
 ## Bundle import — FHIR / C-CDA / MyChart (`importer.rs`)
 

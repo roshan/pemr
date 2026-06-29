@@ -14,6 +14,8 @@ pub struct Subject {
     pub blood_type: Option<String>,
     pub notes: String,
     pub cf_access_email: Option<String>,
+    // 0013: download URL from myvaccinerecord.cdph.ca.gov for the weekly vaccine sync.
+    pub cdph_shc_url: Option<String>,
     // 0008: positive "no known allergies" assertion (distinct from "no data").
     pub no_known_allergies: bool,
     #[serde(with = "time::serde::rfc3339")]
