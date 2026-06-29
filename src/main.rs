@@ -11,6 +11,7 @@ mod import_cli;
 mod importer;
 mod models;
 mod peds;
+mod sync;
 mod viewer;
 mod views;
 
@@ -20,6 +21,7 @@ use axum::Router;
 use axum::ServiceExt;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post};
+use tokio::sync::mpsc;
 use tower::Layer;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -62,9 +64,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = db::connect(&cfg.database_url).await?;
 
+    let (sync_tx, sync_rx) = mpsc::channel::<String>(32);
+    tokio::spawn(sync::run_loop(pool.clone(), sync_rx));
+
     let state = AppState {
         pool: pool.clone(),
         files_dir: Arc::new(cfg.files_dir.clone()),
+        sync_tx,
     };
 
     let viewer_cfg = ViewerConfig {
@@ -187,6 +193,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route(
             "/settings/api-keys/{id}/revoke",
             post(handlers::settings::revoke_api_key),
+        )
+        .route("/settings/sync", get(handlers::sync::page))
+        .route(
+            "/settings/sync/{name}/run",
+            post(handlers::sync::run_task),
         )
         .layer(axum::middleware::from_fn_with_state(
             viewer_cfg,
