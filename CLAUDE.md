@@ -138,17 +138,20 @@ A small task-runner framework for periodic or on-demand syncs. Lives entirely in
 - **Framework** (`src/sync/mod.rs`): `TaskDef` (name + schedule_hours + `TaskFn` function pointer), `SyncJob` (DB row struct), `run_loop` (spawned at startup via `tokio::spawn`). The loop uses `tokio::select!` — a 60-second sleep tick checks due tasks; the `mpsc::Receiver<String>` branch handles on-demand triggers from `POST /settings/sync/:name/run`.
 - **DB state** (`sync_jobs` table, migration `0012`): one row per task — `name (PK)`, `schedule_hours`, `last_started_at`, `last_finished_at`, `last_status` (`ok|error|running`), `last_message`, `next_run_at`. The framework upserts rows at startup (`ON CONFLICT DO NOTHING`). `next_run_at` is bumped by `schedule_hours` at task-start so overlapping runs don't fire even if the task hangs.
 - **Trigger channel**: `AppState.sync_tx: mpsc::Sender<String>` (channel capacity 32). The sync handler sends the task name; the loop receives it and executes immediately.
-- **Adding a task**: (1) Write `src/sync/<name>.rs` with `pub async fn run(pool: PgPool) -> Result<String, String>`. (2) Add a `TaskDef` entry to `ALL_TASKS` in `src/sync/mod.rs`. That's it — the framework handles DB registration, scheduling, and status tracking.
-- **UI**: `GET /settings/sync` — status table + setup instructions. `POST /settings/sync/:name/run` — fires on-demand, redirects back.
+- **Adding a periodic task**: (1) Write `src/sync/<name>.rs` with `pub async fn run(pool: PgPool) -> Result<String, String>`. (2) Add a `TaskDef` to `ALL_TASKS` in `src/sync/mod.rs`. The framework handles DB registration, scheduling, and status tracking.
+- **Manual-only tasks** (like vaccine import) should NOT be in `ALL_TASKS`. Call `sync::record_import(pool, name, status, message)` from the handler to write history into `sync_jobs`.
+- **UI**: `GET /settings/sync` — import form + history table. `POST /settings/sync/vaccine-import` — triggers immediate import. `POST /settings/sync/:name/run` — triggers a scheduled task on-demand.
 
-### Vaccine records task (`src/sync/vaccine.rs`)
+### Vaccine records import (`src/sync/vaccine.rs`)
 
-Syncs immunization records from California's immunization registry (CAIR) via the CDPH Digital Vaccine Record portal. Runs weekly.
+Imports immunization records from the CDPH Digital Vaccine Record portal (myvaccinerecord.cdph.ca.gov). **Not a scheduled task** — CDPH portal links expire after 24 hours, so automation isn't possible; the user triggers the import manually by pasting links from the CDPH email.
 
-- **Per-subject setup**: Store the `.smart-health-card` download URL from `myvaccinerecord.cdph.ca.gov` in `subjects.cdph_shc_url` (migration `0013`). The user completes the OTP flow once, right-clicks the Download button, and copies the link. The task re-fetches this URL each run.
-- **What it does**: Fetches the SHC file (JSON with `verifiableCredential`), decodes the compact JWS (base64url + DEFLATE + FHIR R4 Bundle), extracts `Immunization` resources, upserts into `immunizations` keyed on `(source_id, external_id)` where `source_id` points to an auto-created "CA Immunization Registry (CAIR)" source.
-- **External ID format**: `shc_{cvx_code}_{occurrence_date}__{index}` — stable across re-syncs so re-fetching the same SHC is idempotent.
-- **HTML response**: If the stored URL returns HTML (e.g. the user pasted the page URL instead of the download URL), the task returns a clear error with instructions.
+- **Workflow**: User goes to the portal, completes the OTP flow, receives an email with one link per family member. Paste all links (one per line) into Settings → Sync → Import. The links are fetched immediately — no configuration needed.
+- **Subject matching**: The FHIR bundle in each SHC includes a `Patient` resource with name + DOB. We match on family + given name (case-insensitive, prefix-tolerant) against subjects in the DB. No per-subject setup needed.
+- **SHC extraction from page HTML**: The portal URL returns a React SPA. We fetch the HTML and search for `"verifiableCredential"` embedded in the page state (Next.js `__NEXT_DATA__` or inline JSON). Falls back to scanning for the known ES256 SHC header prefix (`eyJhbGciOiJFUzI1NiIsInppcCI6IkRFRiIsImtpZCI6`).
+- **JWS parsing**: base64url (header/payload/signature split on `.`) → DEFLATE decompress → FHIR R4 Bundle JSON.
+- **Upsert**: into `immunizations` keyed on `(source_id, external_id)` where source is "CA Immunization Registry (CAIR)" (auto-created). `external_id = shc_{cvx_code}_{occurrence_date}__{index}` — stable so re-importing the same SHC is idempotent.
+- **migration `0013`** added `subjects.cdph_shc_url` (later dropped by `0014` — the 24-hour expiry made per-subject URL storage useless).
 
 ## Bundle import — FHIR / C-CDA / MyChart (`importer.rs`)
 

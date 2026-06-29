@@ -51,8 +51,6 @@ pub struct CreateForm {
     #[serde(default)]
     pub cf_access_email: String,
     #[serde(default)]
-    pub cdph_shc_url: String,
-    #[serde(default)]
     pub notes: String,
 }
 
@@ -425,8 +423,7 @@ pub async fn edit(
             sex_at_birth = $6,
             blood_type = $7,
             cf_access_email = $8,
-            cdph_shc_url = $9,
-            notes = $10,
+            notes = $9,
             updated_at = now()
           where id = $1",
     )
@@ -438,7 +435,6 @@ pub async fn edit(
     .bind(empty_to_none(form.sex_at_birth))
     .bind(empty_to_none(form.blood_type))
     .bind(empty_to_none(form.cf_access_email))
-    .bind(empty_to_none(form.cdph_shc_url))
     .bind(form.notes)
     .execute(&state.pool)
     .await?;

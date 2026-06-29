@@ -6,7 +6,7 @@ use time::OffsetDateTime;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 
-mod vaccine;
+pub mod vaccine;
 
 pub type TaskFn =
     fn(PgPool) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>>;
@@ -28,16 +28,35 @@ pub struct SyncJob {
     pub next_run_at: OffsetDateTime,
 }
 
-static ALL_TASKS: &[TaskDef] = &[TaskDef {
-    name: "vaccine_records",
-    schedule_hours: 168,
-    run: |pool| Box::pin(vaccine::run(pool)),
-}];
+/// Registered scheduled tasks. Add future periodic tasks here (e.g. insurance
+/// card refresh, lab portal sync). The vaccine import is NOT here — CDPH URLs
+/// expire in 24 h so it's triggered manually via the import form, not scheduled.
+static ALL_TASKS: &[TaskDef] = &[];
 
 pub async fn all_jobs(pool: &PgPool) -> Result<Vec<SyncJob>, sqlx::Error> {
     sqlx::query_as::<_, SyncJob>("select * from sync_jobs order by name")
         .fetch_all(pool)
         .await
+}
+
+/// Records the result of a manually-triggered import into sync_jobs.
+/// Creates the row if it doesn't exist yet.
+pub async fn record_import(pool: &PgPool, name: &str, status: &str, message: &str) {
+    let _ = sqlx::query(
+        "insert into sync_jobs (name, schedule_hours, last_started_at, last_finished_at,
+                                last_status, last_message, next_run_at)
+         values ($1, 0, now(), now(), $2, $3, 'infinity')
+         on conflict (name) do update set
+             last_started_at  = now(),
+             last_finished_at = now(),
+             last_status      = $2,
+             last_message     = $3",
+    )
+    .bind(name)
+    .bind(status)
+    .bind(message)
+    .execute(pool)
+    .await;
 }
 
 pub async fn run_loop(pool: PgPool, mut trigger_rx: mpsc::Receiver<String>) {

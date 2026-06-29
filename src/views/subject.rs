@@ -287,11 +287,6 @@ pub fn edit_form(nav: &Nav<'_>, subject: &Subject, error: Option<&str>) -> Marku
                 &subject.cf_access_email.clone().unwrap_or_default(),
                 None,
             )))
-            (c::field_with_hint(
-                "CDPH vaccine record URL",
-                "Paste the download link from myvaccinerecord.cdph.ca.gov. The weekly sync task fetches this to import immunization records from California's registry (CAIR). See Settings → Sync for setup instructions.",
-                c::input_url("cdph_shc_url", &subject.cdph_shc_url.clone().unwrap_or_default()),
-            ))
             (c::field("Notes", c::textarea_field("notes", &subject.notes, 5)))
             div class="flex gap-2" {
                 (c::button_primary("Save"))
