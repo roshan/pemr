@@ -196,6 +196,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .route("/settings/sync", get(handlers::sync::page))
         .route(
+            "/settings/sync/vaccine-import",
+            post(handlers::sync::import_vaccines),
+        )
+        .route(
             "/settings/sync/{name}/run",
             post(handlers::sync::run_task),
         )

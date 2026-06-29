@@ -5,28 +5,65 @@ use crate::sync::SyncJob;
 use crate::views::components as c;
 use crate::views::layout::{Nav, shell};
 
-pub fn page(nav: &Nav<'_>, jobs: &[SyncJob]) -> Markup {
+pub fn page(
+    nav: &Nav<'_>,
+    jobs: &[SyncJob],
+    import_result: Option<(&str, &str)>,
+) -> Markup {
     let body = html! {
         (c::page_title("Sync"))
-        p class="text-sm text-muted mb-4" {
-            "Background tasks that run on a schedule or on demand. "
-            "Set up each task by configuring the required fields on the relevant subjects."
+
+        // Vaccine import section
+        section class="mb-8" {
+            (c::section_heading("Import vaccine records (CDPH)"))
+            p class="text-sm text-muted mb-4" {
+                "Go to "
+                a href="https://myvaccinerecord.cdph.ca.gov" target="_blank" rel="noopener"
+                  class="text-brand hover:underline" {
+                    "myvaccinerecord.cdph.ca.gov"
+                }
+                ", complete the lookup, and paste the links from the email you receive."
+                " Each link is valid for 24 hours — import before they expire."
+                " One link per family member is fine; paste all on separate lines."
+            }
+
+            @if let Some((status, message)) = import_result {
+                div class="mb-4" {
+                    @if status == "ok" {
+                        (c::card(html! {
+                            p class="text-sm text-ink" { (message) }
+                        }))
+                    } @else {
+                        (c::alert_danger(message))
+                    }
+                }
+            }
+
+            (c::form("/settings/sync/vaccine-import", "post", html! {
+                (c::field_with_hint(
+                    "CDPH vaccine record URLs",
+                    "Paste one URL per line — one per family member from the CDPH email.",
+                    html! {
+                        textarea name="urls" rows="4"
+                            placeholder="https://myvaccinerecord.cdph.ca.gov/qr/en/DVR/…"
+                            class="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm font-mono text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-brand/40" {}
+                    },
+                ))
+                (c::button_primary("Import now"))
+            }))
         }
 
-        (c::lane(
-            html! { (c::section_heading("Tasks")) },
-            html! {
-                @if jobs.is_empty() {
-                    (c::empty_state("No sync tasks registered yet."))
-                } @else {
+        // History of past imports / scheduled tasks
+        @if !jobs.is_empty() {
+            (c::lane(
+                html! { (c::section_heading("History")) },
+                html! {
                     (c::data_table(
                         html! { tr {
                             (c::th("Task"))
                             (c::th("Status"))
                             (c::th("Last run"))
-                            (c::th("Next run"))
-                            (c::th("Last message"))
-                            (c::th(""))
+                            (c::th("Message"))
                         } },
                         html! {
                             @for job in jobs {
@@ -34,46 +71,8 @@ pub fn page(nav: &Nav<'_>, jobs: &[SyncJob]) -> Markup {
                             }
                         },
                     ))
-                }
-            },
-        ))
-
-        div class="mt-4" {
-            (c::card(html! {
-                (c::subheading("Vaccine records task — setup"))
-                p class="text-sm text-ink mt-2" {
-                    "This task syncs immunization records from California's immunization registry (CAIR) "
-                    "via the CDPH Digital Vaccine Record portal."
-                }
-                ol class="mt-3 space-y-1 text-sm text-ink list-decimal list-inside" {
-                    li {
-                        "Go to "
-                        a href="https://myvaccinerecord.cdph.ca.gov" target="_blank"
-                          class="text-brand hover:underline" {
-                            "myvaccinerecord.cdph.ca.gov"
-                        }
-                        " and complete the lookup (name + DOB + phone/email + PIN)."
-                    }
-                    li {
-                        "On the results page, right-click the "
-                        strong { "Download" }
-                        " button and choose "
-                        em { "Copy link address" }
-                        " — "
-                        "or download the file and note the URL."
-                    }
-                    li {
-                        "Paste that URL into the "
-                        strong { "CDPH vaccine record URL" }
-                        " field on the subject's edit page. "
-                        "Do this for each family member."
-                    }
-                }
-                p class="mt-3 text-xs text-muted" {
-                    "The task runs weekly and re-fetches the same URL. "
-                    "If the URL expires, update it by repeating the process above."
-                }
-            }))
+                },
+            ))
         }
     };
     shell(nav, body)
@@ -85,7 +84,6 @@ fn job_row(job: &SyncJob) -> Markup {
             (c::td(html! { span class="font-medium" { (job.name.replace('_', " ")) } }))
             (c::td(html! { (status_badge(job.last_status.as_deref())) }))
             (c::td(html! { (fmt_ts(job.last_finished_at)) }))
-            (c::td(html! { (fmt_ts(Some(job.next_run_at))) }))
             (c::td(html! {
                 @if let Some(msg) = &job.last_message {
                     span class="text-xs text-muted" { (msg) }
@@ -93,7 +91,6 @@ fn job_row(job: &SyncJob) -> Markup {
                     "—"
                 }
             }))
-            (c::td(html! { (run_button(&job.name)) }))
         }
     }
 }
@@ -105,17 +102,6 @@ fn status_badge(status: Option<&str>) -> Markup {
         Some("running") => html! { (c::badge_warn("running")) },
         Some("error") => html! { span class="text-xs font-medium text-danger" { "error" } },
         Some(other) => html! { span class="text-xs text-muted" { (other) } },
-    }
-}
-
-fn run_button(name: &str) -> Markup {
-    html! {
-        form action={ "/settings/sync/" (name) "/run" } method="post" {
-            button type="submit"
-                   class="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium text-brand border border-line hover:bg-brand/5" {
-                "Run now"
-            }
-        }
     }
 }
 
