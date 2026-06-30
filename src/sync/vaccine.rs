@@ -31,7 +31,14 @@ use uuid::Uuid;
 /// URL fetching works when the CDPH page is server-side rendered (which it
 /// appears to be based on the rich HTML it returns). If the URL fetch doesn't
 /// return the vaccine data, paste the page HTML directly instead.
-pub async fn import_from_urls(pool: &PgPool, inputs: Vec<String>) -> Result<String, String> {
+/// `subject_override`: if provided, all imported vaccines are assigned to this
+/// subject regardless of the name on the page. Use this when CAIR labels the
+/// patient as "Dependent Minor 1" instead of their real name.
+pub async fn import_from_urls(
+    pool: &PgPool,
+    inputs: Vec<String>,
+    subject_override: Option<Uuid>,
+) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (personal-emr vaccine sync)")
         .build()
@@ -54,7 +61,7 @@ pub async fn import_from_urls(pool: &PgPool, inputs: Vec<String>) -> Result<Stri
         if input.is_empty() {
             continue;
         }
-        match process_input(pool, &client, source_id, &subjects, input).await {
+        match process_input(pool, &client, source_id, &subjects, input, subject_override).await {
             Ok((name, count)) => {
                 messages.push(format!("{name}: {count} immunization(s)"));
                 total += count;
@@ -85,6 +92,7 @@ async fn process_input(
     source_id: Uuid,
     subjects: &[(Uuid, String)],
     input: &str,
+    subject_override: Option<Uuid>,
 ) -> Result<(String, u32), String> {
     let html = if input.starts_with("http://") || input.starts_with("https://") {
         fetch_html(client, input).await?
@@ -92,8 +100,20 @@ async fn process_input(
         input.to_string()
     };
 
-    let (full_name, immunizations) = parse_cdph_html(&html)?;
-    let subject_id = match_subject(subjects, &full_name)?;
+    let (page_name, immunizations) = parse_cdph_html(&html)?;
+
+    let (subject_id, display_name) = if let Some(id) = subject_override {
+        // Caller pinned a subject — look up their name for the result message.
+        let name = subjects
+            .iter()
+            .find(|(sid, _)| *sid == id)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| id.to_string());
+        (id, name)
+    } else {
+        let id = match_subject(subjects, &page_name)?;
+        (id, page_name)
+    };
 
     let mut count = 0u32;
     // Deduplicate: same vaccine+date+dose appears once per disease group.
@@ -106,8 +126,8 @@ async fn process_input(
         }
     }
 
-    tracing::info!(subject = %full_name, count, "vaccine import completed");
-    Ok((full_name, count))
+    tracing::info!(subject = %display_name, count, "vaccine import completed");
+    Ok((display_name, count))
 }
 
 // ---------------------------------------------------------------------------
