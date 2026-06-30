@@ -20,7 +20,7 @@ pub struct TaskDef {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SyncJob {
     pub name: String,
-    pub schedule_hours: i64,
+    pub schedule_hours: i32,
     pub last_started_at: Option<OffsetDateTime>,
     pub last_finished_at: Option<OffsetDateTime>,
     pub last_status: Option<String>,
