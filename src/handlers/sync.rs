@@ -37,15 +37,22 @@ pub async fn import_vaccines(
     viewer: ViewerContext,
     Form(form): Form<VaccineImportForm>,
 ) -> AppResult<Markup> {
-    let urls: Vec<String> = form
-        .urls
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(str::to_string)
-        .collect();
+    let content = form.urls.trim().to_string();
 
-    let result = sync::vaccine::import_from_urls(&state.pool, urls).await;
+    // Auto-detect: if the content starts with '<' it's pasted HTML for one person.
+    // Otherwise split on newlines and treat each non-empty line as a URL.
+    let inputs: Vec<String> = if content.starts_with('<') {
+        vec![content]
+    } else {
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+
+    let result = sync::vaccine::import_from_urls(&state.pool, inputs).await;
 
     let (status, message) = match &result {
         Ok(msg) => ("ok", msg.clone()),

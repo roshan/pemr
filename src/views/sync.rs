@@ -16,23 +16,26 @@ pub fn page(
         // Vaccine import section
         section class="mb-8" {
             (c::section_heading("Import vaccine records (CDPH)"))
-            p class="text-sm text-muted mb-4" {
-                "Go to "
-                a href="https://myvaccinerecord.cdph.ca.gov" target="_blank" rel="noopener"
-                  class="text-brand hover:underline" {
-                    "myvaccinerecord.cdph.ca.gov"
+
+            div class="mb-4 space-y-2 text-sm text-muted" {
+                p {
+                    strong class="text-ink" { "Option A — paste the link(s) from the CDPH email" }
+                    ", one per line. Links expire in 24 h — import before they do."
                 }
-                ", complete the lookup, and paste the links from the email you receive."
-                " Each link is valid for 24 hours — import before they expire."
-                " One link per family member is fine; paste all on separate lines."
+                p {
+                    strong class="text-ink" { "Option B — paste the page HTML" }
+                    " if Option A fails: open the link in a browser, press "
+                    code class="text-xs bg-slate-100 px-1 rounded" { "F12" }
+                    " → Elements tab → right-click the "
+                    code class="text-xs bg-slate-100 px-1 rounded" { "<html>" }
+                    " node → Copy → Copy outerHTML, then paste below. One person at a time."
+                }
             }
 
             @if let Some((status, message)) = import_result {
                 div class="mb-4" {
                     @if status == "ok" {
-                        (c::card(html! {
-                            p class="text-sm text-ink" { (message) }
-                        }))
+                        (c::card(html! { p class="text-sm text-ink" { (message) } }))
                     } @else {
                         (c::alert_danger(message))
                     }
@@ -40,16 +43,15 @@ pub fn page(
             }
 
             (c::form("/settings/sync/vaccine-import", "post", html! {
-                (c::field_with_hint(
-                    "CDPH vaccine record URLs",
-                    "Paste one URL per line — one per family member from the CDPH email.",
+                (c::field(
+                    "CDPH link(s) or page HTML",
                     html! {
-                        textarea name="urls" rows="4"
-                            placeholder="https://myvaccinerecord.cdph.ca.gov/qr/en/DVR/…"
+                        textarea name="urls" rows="5"
+                            placeholder="https://myvaccinerecord.cdph.ca.gov/qr/en/DVR/…\nhttps://myvaccinerecord.cdph.ca.gov/qr/en/DVR/…"
                             class="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm font-mono text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-brand/40" {}
                     },
                 ))
-                (c::button_primary("Import now"))
+                (c::button_primary("Import"))
             }))
         }
 

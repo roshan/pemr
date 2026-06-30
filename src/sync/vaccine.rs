@@ -1,23 +1,18 @@
-//! Import immunization records from CDPH SMART Health Card URLs.
+//! Import immunization records from CDPH Digital Vaccine Record page HTML.
 //!
-//! The CDPH Digital Vaccine Record portal (myvaccinerecord.cdph.ca.gov) sends
-//! an email with per-person links valid for 24 hours. Paste those links into
-//! the import form on Settings → Sync; this module fetches each URL
-//! immediately, decodes the SMART Health Card JWS, and upserts the
-//! Immunization resources.
+//! The CDPH portal (myvaccinerecord.cdph.ca.gov) sends an email with links
+//! valid for 24 h. Each link renders a React/MUI page containing the full
+//! CAIR immunization history as HTML tables — there is no embedded SMART
+//! Health Card JWS. This module fetches the page and parses the tables
+//! directly.
 //!
-//! Subject matching: the SHC FHIR bundle includes a Patient resource. We
-//! match it case-insensitively on family+given name against subjects in the
-//! DB. No per-subject configuration is required.
+//! Subject matching: the page header shows the patient's name. We match
+//! case-insensitively against subjects.full_name.
 //!
-//! URL extraction: the page URL (`.../qr/en/DVR/<token>`) is a React SPA.
-//! We fetch the HTML and search for the compact JWS embedded in the page
-//! state (Next.js `__NEXT_DATA__` or an inline `verifiableCredential` value).
-//! If not found we return a clear error.
+//! Deduplication: external_id = `cair_{vaccine_slug}_{date}_{dose}`.
+//! Combination vaccines (DTaP-IPV/Hib) appear once per disease group but
+//! carry the same name+date+dose, so they naturally collapse to one row.
 
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use serde::Deserialize;
 use sqlx::PgPool;
 use time::Date;
 use time::macros::format_description;
@@ -27,22 +22,23 @@ use uuid::Uuid;
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Import vaccine records from one or more CDPH portal URLs.
+/// Import from one or more CDPH inputs.
 ///
-/// Each URL should be the link received in the CDPH email
-/// (`https://myvaccinerecord.cdph.ca.gov/qr/en/DVR/<token>`).
-/// URLs are fetched immediately; call this within 24 h of receiving the email.
-pub async fn import_from_urls(
-    pool: &PgPool,
-    urls: Vec<String>,
-) -> Result<String, String> {
+/// Each entry in `inputs` can be either:
+/// - A `https://myvaccinerecord.cdph.ca.gov/...` URL — the server fetches it
+/// - Raw HTML pasted from the CDPH page (starts with `<`) — parsed directly
+///
+/// URL fetching works when the CDPH page is server-side rendered (which it
+/// appears to be based on the rich HTML it returns). If the URL fetch doesn't
+/// return the vaccine data, paste the page HTML directly instead.
+pub async fn import_from_urls(pool: &PgPool, inputs: Vec<String>) -> Result<String, String> {
     let client = reqwest::Client::builder()
-        .user_agent("personal-emr/1.0 (family health record sync)")
+        .user_agent("Mozilla/5.0 (personal-emr vaccine sync)")
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
-    let subjects = sqlx::query_as::<_, (Uuid, String, String)>(
-        "select id, given_name, family_name from subjects order by family_name, given_name",
+    let subjects = sqlx::query_as::<_, (Uuid, String)>(
+        "select id, full_name from subjects order by family_name, given_name",
     )
     .fetch_all(pool)
     .await
@@ -50,32 +46,28 @@ pub async fn import_from_urls(
 
     let source_id = ensure_cair_source(pool).await?;
 
-    let mut total_upserted = 0u32;
+    let mut total = 0u32;
     let mut messages: Vec<String> = Vec::new();
 
-    for url in &urls {
-        let url = url.trim();
-        if url.is_empty() {
+    for input in &inputs {
+        let input = input.trim();
+        if input.is_empty() {
             continue;
         }
-        match process_url(pool, &client, source_id, &subjects, url).await {
-            Ok((subject_name, count)) => {
-                messages.push(format!("{subject_name}: {count} immunization(s)"));
-                total_upserted += count;
+        match process_input(pool, &client, source_id, &subjects, input).await {
+            Ok((name, count)) => {
+                messages.push(format!("{name}: {count} immunization(s)"));
+                total += count;
             }
-            Err(e) => messages.push(format!("Error ({url}): {e}")),
+            Err(e) => messages.push(format!("Error: {e}")),
         }
     }
 
     if messages.is_empty() {
-        return Err("No URLs provided.".into());
+        return Err("Nothing to import — paste a CDPH link or the page HTML.".into());
     }
 
-    let summary = format!(
-        "Imported {total_upserted} immunization(s). {}",
-        messages.join("; ")
-    );
-
+    let summary = format!("Imported {total} immunization(s). {}", messages.join("; "));
     if messages.iter().any(|m| m.starts_with("Error")) {
         Err(summary)
     } else {
@@ -87,349 +79,259 @@ pub async fn import_from_urls(
 // Per-URL processing
 // ---------------------------------------------------------------------------
 
-async fn process_url(
+async fn process_input(
     pool: &PgPool,
     client: &reqwest::Client,
     source_id: Uuid,
-    subjects: &[(Uuid, String, String)],
-    url: &str,
+    subjects: &[(Uuid, String)],
+    input: &str,
 ) -> Result<(String, u32), String> {
-    let jws = fetch_jws(client, url).await?;
-    let (patient, immunizations) = parse_jws(&jws)?;
+    let html = if input.starts_with("http://") || input.starts_with("https://") {
+        fetch_html(client, input).await?
+    } else {
+        input.to_string()
+    };
 
-    let subject_id = match_subject(subjects, &patient)?;
-    let subject_name = format!("{} {}", patient.given, patient.family);
+    let (full_name, immunizations) = parse_cdph_html(&html)?;
+    let subject_id = match_subject(subjects, &full_name)?;
 
     let mut count = 0u32;
-    for (i, imm) in immunizations.iter().enumerate() {
-        let ext_id = external_id(imm, i);
-        upsert_immunization(pool, source_id, subject_id, imm, &ext_id).await?;
-        count += 1;
+    // Deduplicate: same vaccine+date+dose appears once per disease group.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for imm in &immunizations {
+        let ext_id = external_id(imm);
+        if seen.insert(ext_id.clone()) {
+            upsert_immunization(pool, source_id, subject_id, imm, &ext_id).await?;
+            count += 1;
+        }
     }
 
-    tracing::info!(
-        subject = %subject_name,
-        count,
-        "vaccine import completed"
-    );
-    Ok((subject_name, count))
+    tracing::info!(subject = %full_name, count, "vaccine import completed");
+    Ok((full_name, count))
 }
 
 // ---------------------------------------------------------------------------
-// Fetching the SHC from a CDPH page URL
+// HTTP fetch
 // ---------------------------------------------------------------------------
 
-/// Fetches the CDPH page and extracts the compact JWS.
-///
-/// The portal page is a React SPA. We fetch the HTML and look for the
-/// compact JWS (a base64url string of the form `eyJ…`) embedded in the
-/// page state. The compact JWS starts with `eyJ` (base64url of `{`) in its
-/// header segment.
-async fn fetch_jws(client: &reqwest::Client, url: &str) -> Result<String, String> {
+async fn fetch_html(client: &reqwest::Client, url: &str) -> Result<String, String> {
     let resp = client
         .get(url)
-        .header("Accept", "application/smart-health-card, application/json, text/html, */*")
+        .header("Accept", "text/html,*/*")
         .send()
         .await
         .map_err(|e| format!("HTTP request failed: {e}"))?;
 
     let status = resp.status();
     if !status.is_success() {
-        return Err(format!("HTTP {status} fetching URL"));
+        return Err(format!("HTTP {status} — the link may have expired (24-hour limit)"));
     }
 
-    let content_type = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_lowercase();
-
-    let body = resp
-        .text()
+    resp.text()
         .await
-        .map_err(|e| format!("Failed to read response body: {e}"))?;
-
-    // Direct JSON response with verifiableCredential
-    if content_type.contains("json") || content_type.contains("smart-health-card") {
-        return extract_jws_from_json(&body);
-    }
-
-    // HTML page — search for the JWS embedded in page state
-    extract_jws_from_html(&body)
-}
-
-fn extract_jws_from_json(body: &str) -> Result<String, String> {
-    // {"verifiableCredential":["<compact-jws>"]}
-    #[derive(Deserialize)]
-    struct Shc {
-        #[serde(rename = "verifiableCredential")]
-        verifiable_credential: Vec<String>,
-    }
-    let shc: Shc = serde_json::from_str(body)
-        .map_err(|e| format!("Could not parse SHC JSON: {e}"))?;
-    shc.verifiable_credential
-        .into_iter()
-        .next()
-        .ok_or_else(|| "SHC has no verifiableCredential entries".into())
-}
-
-/// Scans HTML for a compact JWS embedded in the page state.
-///
-/// Next.js apps embed server props in a `<script id="__NEXT_DATA__">` JSON
-/// block. The JWS may also appear directly as a `verifiableCredential` value.
-/// We look for the text `"verifiableCredential"` followed by `["eyJ` and
-/// extract the credential string.
-fn extract_jws_from_html(html: &str) -> Result<String, String> {
-    // Strategy 1: find `"verifiableCredential":["eyJ` pattern
-    const NEEDLE: &str = r#""verifiableCredential":["#;
-    if let Some(start) = html.find(NEEDLE) {
-        let after = &html[start + NEEDLE.len()..];
-        // The value is a JSON string: starts with `"` then the JWS, ends with `"`
-        let after = after.trim_start();
-        if after.starts_with('"') {
-            let inner = &after[1..];
-            if let Some(end) = inner.find('"') {
-                let candidate = &inner[..end];
-                if looks_like_jws(candidate) {
-                    return Ok(candidate.to_string());
-                }
-            }
-        }
-    }
-
-    // Strategy 2: find a bare compact JWS starting with eyJ (header of ES256 SHC)
-    // SHC header base64url-decodes to {"alg":"ES256","zip":"DEF","kid":"..."}
-    // which always starts with eyJ. Look for eyJ...eyJ...
-    // (header.payload — payload starts with eyJ only if uncompressed, but
-    //  in SHC it's compressed so payload is NOT eyJ. Two consecutive eyJ
-    //  segments separated by `.` means header.something.)
-    if let Some(pos) = html.find("eyJhbGciOiJFUzI1NiIsInppcCI6IkRFRiIsImtpZCI6") {
-        // Found a known SHC header prefix (base64url of {"alg":"ES256","zip":"DEF","kid":"})
-        let fragment = &html[pos..];
-        let end = fragment
-            .find(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-' && c != '.')
-            .unwrap_or(fragment.len());
-        let candidate = &fragment[..end];
-        if looks_like_jws(candidate) {
-            return Ok(candidate.to_string());
-        }
-    }
-
-    Err(
-        "Could not find a SMART Health Card in the page response. \
-         The portal URL may have expired (24-hour limit) or the page structure \
-         has changed. Try downloading the .smart-health-card file from the portal \
-         and uploading it below instead."
-            .into(),
-    )
-}
-
-fn looks_like_jws(s: &str) -> bool {
-    // Compact JWS has exactly 2 dots separating 3 base64url segments
-    s.starts_with("eyJ") && s.matches('.').count() == 2
+        .map_err(|e| format!("Failed to read response: {e}"))
 }
 
 // ---------------------------------------------------------------------------
-// JWS decoding → FHIR Bundle → immunizations
+// HTML parsing
 // ---------------------------------------------------------------------------
 
 struct PatientInfo {
-    given: String,
-    family: String,
+    full_name: String,
 }
 
-fn parse_jws(jws: &str) -> Result<(PatientInfo, Vec<ParsedImmunization>), String> {
-    let parts: Vec<&str> = jws.splitn(3, '.').collect();
-    if parts.len() != 3 {
-        return Err("JWS format invalid (expected header.payload.signature)".into());
+struct ParsedImmunization {
+    vaccine: String,
+    dose_number: Option<i32>,
+    occurred_at: Option<Date>,
+    status: String,
+}
+
+/// Extracts patient name and immunization rows from the CDPH page HTML.
+///
+/// The page structure:
+///   <span><span style="font-weight: bold;">Name: </span>Astra Meridian </span>
+///   <tbody>
+///     <tr><td>DTaP-IPV/Hib</td><td>1</td><td>05/07/2025</td><td>0y 1m 29d</td><td>Clinic</td></tr>
+///   </tbody>
+fn parse_cdph_html(html: &str) -> Result<(String, Vec<ParsedImmunization>), String> {
+    let full_name = extract_patient_name(html)?;
+    let immunizations = parse_vaccine_tables(html);
+    Ok((full_name, immunizations))
+}
+
+fn extract_patient_name(html: &str) -> Result<String, String> {
+    const MARKER: &str = "Name: </span>";
+    let pos = html
+        .find(MARKER)
+        .ok_or("Could not find patient name in page (wrong URL or page structure changed)")?;
+    let rest = &html[pos + MARKER.len()..];
+    let end = rest
+        .find('<')
+        .ok_or("Could not parse patient name from page")?;
+    let name = rest[..end].trim().to_string();
+    if name.is_empty() {
+        return Err("Patient name was empty".into());
+    }
+    Ok(name)
+}
+
+fn parse_vaccine_tables(html: &str) -> Vec<ParsedImmunization> {
+    let mut result = Vec::new();
+    let mut search = html;
+
+    while let Some(start) = search.find("<tbody") {
+        let rest = &search[start..];
+        if let Some(end) = rest.find("</tbody>") {
+            let tbody = &rest[..end + 8];
+            parse_tbody(tbody, &mut result);
+            search = &rest[end + 8..];
+        } else {
+            break;
+        }
     }
 
-    let compressed = URL_SAFE_NO_PAD
-        .decode(parts[1])
-        .map_err(|e| format!("JWS payload base64 decode failed: {e}"))?;
+    result
+}
 
-    let json_bytes = deflate_decompress(&compressed)?;
+fn parse_tbody(tbody: &str, result: &mut Vec<ParsedImmunization>) {
+    let mut search = tbody;
 
-    let bundle: serde_json::Value = serde_json::from_slice(&json_bytes)
-        .map_err(|e| format!("FHIR bundle JSON parse failed: {e}"))?;
-
-    let entries = bundle
-        .get("entry")
-        .and_then(|v| v.as_array())
-        .ok_or("FHIR bundle has no entry array")?;
-
-    let mut patient: Option<PatientInfo> = None;
-    let mut immunizations = Vec::new();
-
-    for entry in entries {
-        let resource = match entry.get("resource") {
-            Some(r) => r,
-            None => continue,
-        };
-        match resource.get("resourceType").and_then(|v| v.as_str()) {
-            Some("Patient") => {
-                patient = extract_patient(resource);
+    while let Some(tr_start) = search.find("<tr") {
+        let rest = &search[tr_start..];
+        if let Some(tr_end) = rest.find("</tr>") {
+            let row = &rest[..tr_end + 5];
+            if let Some(imm) = parse_row(row) {
+                result.push(imm);
             }
-            Some("Immunization") => {
-                if let Some(imm) = extract_immunization(resource) {
-                    immunizations.push(imm);
-                }
+            search = &rest[tr_end + 5..];
+        } else {
+            break;
+        }
+    }
+}
+
+fn parse_row(row: &str) -> Option<ParsedImmunization> {
+    let cells = extract_td_texts(row);
+    if cells.len() < 5 {
+        return None; // skip header/recommendation rows (< 5 columns)
+    }
+
+    let vaccine = cells[0].trim().to_string();
+    if vaccine.is_empty() || vaccine == "Vaccine" {
+        return None;
+    }
+
+    let dose_text = cells[1].trim().to_string();
+    let date_text = cells[2].trim();
+
+    // "Invalid" means given too soon per CDC; dose still counts clinically.
+    let is_invalid = dose_text.to_lowercase().starts_with("invalid");
+    let dose_number = if is_invalid {
+        None
+    } else {
+        dose_text.parse::<i32>().ok()
+    };
+
+    let occurred_at = parse_mmddyyyy(date_text);
+    if occurred_at.is_none() && date_text.is_empty() {
+        return None; // no date → skip (shouldn't happen in practice)
+    }
+
+    Some(ParsedImmunization {
+        vaccine,
+        dose_number,
+        occurred_at,
+        status: "completed".into(),
+    })
+}
+
+/// Extracts the text content of each `<td>...</td>` in a `<tr>` block.
+fn extract_td_texts(html: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut search = html;
+
+    while let Some(td_start) = search.find("<td") {
+        let rest = &search[td_start..];
+        if let Some(tag_close) = rest.find('>') {
+            let after_open = &rest[tag_close + 1..];
+            if let Some(td_end) = after_open.find("</td>") {
+                let content = strip_tags(&after_open[..td_end]);
+                result.push(content.trim().to_string());
+                search = &after_open[td_end + 5..];
+            } else {
+                break;
             }
+        } else {
+            break;
+        }
+    }
+
+    result
+}
+
+/// Removes all HTML tags, leaving only text nodes.
+fn strip_tags(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
             _ => {}
         }
     }
-
-    let patient = patient.ok_or(
-        "FHIR bundle has no Patient resource — cannot match to a subject".to_string(),
-    )?;
-
-    Ok((patient, immunizations))
+    out
 }
 
-fn deflate_decompress(compressed: &[u8]) -> Result<Vec<u8>, String> {
-    use flate2::read::DeflateDecoder;
-    use std::io::Read;
-    let mut decoder = DeflateDecoder::new(compressed);
-    let mut out = Vec::new();
-    decoder
-        .read_to_end(&mut out)
-        .map_err(|e| format!("DEFLATE decompress failed: {e}"))?;
-    Ok(out)
+fn parse_mmddyyyy(s: &str) -> Option<Date> {
+    let fmt = format_description!("[month]/[day]/[year]");
+    Date::parse(s, fmt).ok()
 }
 
-fn extract_patient(res: &serde_json::Value) -> Option<PatientInfo> {
-    let name = res.get("name")?.as_array()?.first()?;
-    let family = name.get("family")?.as_str()?.to_string();
-    let given = name
-        .get("given")
-        .and_then(|g| g.as_array())
-        .and_then(|a| a.first())
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    Some(PatientInfo { given, family })
-}
+// ---------------------------------------------------------------------------
+// Subject matching
+// ---------------------------------------------------------------------------
 
-fn match_subject(
-    subjects: &[(Uuid, String, String)],
-    patient: &PatientInfo,
-) -> Result<Uuid, String> {
-    let pf = patient.family.to_lowercase();
-    let pg = patient.given.to_lowercase();
+fn match_subject(subjects: &[(Uuid, String)], name: &str) -> Result<Uuid, String> {
+    let needle = name.to_lowercase();
 
-    // Exact match on family + given
-    for (id, given, family) in subjects {
-        if family.to_lowercase() == pf && given.to_lowercase() == pg {
+    // Exact full_name match
+    for (id, full_name) in subjects {
+        if full_name.to_lowercase() == needle {
             return Ok(*id);
         }
     }
 
-    // Prefix match on given name (e.g. SHC has "ROSHAN" but DB has "Roshan")
-    for (id, given, family) in subjects {
-        if family.to_lowercase() == pf
-            && (given.to_lowercase().starts_with(&pg) || pg.starts_with(&given.to_lowercase()))
-        {
+    // Substring match (handles trailing spaces, middle names, etc.)
+    for (id, full_name) in subjects {
+        let fn_lower = full_name.to_lowercase();
+        if fn_lower.contains(&needle) || needle.contains(&fn_lower) {
             return Ok(*id);
         }
     }
 
+    let known: Vec<&str> = subjects.iter().map(|(_, n)| n.as_str()).collect();
     Err(format!(
-        "No subject found for patient \"{} {}\" in the FHIR bundle. \
-         Check that the name in your subjects list matches exactly.",
-        patient.given, patient.family
+        "No subject matched \"{name}\" — known subjects: {}. \
+         Check that the name in your subjects list matches what CAIR has on file.",
+        known.join(", ")
     ))
 }
 
 // ---------------------------------------------------------------------------
-// Immunization extraction
+// Deduplication and DB
 // ---------------------------------------------------------------------------
 
-struct ParsedImmunization {
-    vaccine: String,
-    cvx_code: Option<String>,
-    occurred_at: Option<Date>,
-    lot_number: Option<String>,
-    status: String,
-}
-
-fn extract_immunization(res: &serde_json::Value) -> Option<ParsedImmunization> {
-    let fhir_status = res
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("completed");
-    let status = match fhir_status {
-        "not-done" => "not_given",
-        "entered-in-error" => "entered_in_error",
-        _ => "completed",
-    }
-    .to_string();
-
-    let vaccine_code = res.get("vaccineCode")?;
-    let vaccine = vaccine_code
-        .get("text")
-        .and_then(|v| v.as_str())
-        .or_else(|| {
-            vaccine_code
-                .get("coding")
-                .and_then(|c| c.as_array())
-                .and_then(|a| a.first())
-                .and_then(|e| e.get("display"))
-                .and_then(|v| v.as_str())
-        })
-        .unwrap_or("Unknown vaccine")
-        .to_string();
-
-    let cvx_code = vaccine_code
-        .get("coding")
-        .and_then(|c| c.as_array())
-        .and_then(|a| {
-            a.iter().find(|e| {
-                e.get("system")
-                    .and_then(|s| s.as_str())
-                    .map(|s| s.contains("cvx"))
-                    .unwrap_or(false)
-            })
-        })
-        .and_then(|e| e.get("code"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let occurred_at = res
-        .get("occurrenceDateTime")
-        .and_then(|v| v.as_str())
-        .and_then(parse_fhir_date);
-
-    let lot_number = res
-        .get("lotNumber")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    Some(ParsedImmunization {
-        vaccine,
-        cvx_code,
-        occurred_at,
-        lot_number,
-        status,
-    })
-}
-
-fn parse_fhir_date(s: &str) -> Option<Date> {
-    let date_str = s.split('T').next()?;
-    let fmt = format_description!("[year]-[month]-[day]");
-    Date::parse(date_str, fmt).ok()
-}
-
-fn external_id(imm: &ParsedImmunization, idx: usize) -> String {
-    let code = imm
-        .cvx_code
-        .clone()
-        .unwrap_or_else(|| slug(&imm.vaccine));
+fn external_id(imm: &ParsedImmunization) -> String {
+    let vax = slug(&imm.vaccine);
     let date = imm
         .occurred_at
         .map(|d| d.to_string())
         .unwrap_or_else(|| "unknown".into());
-    format!("shc_{code}_{date}__{idx}")
+    let dose = imm.dose_number.unwrap_or(0);
+    format!("cair_{vax}_{date}_{dose}")
 }
 
 fn slug(s: &str) -> String {
@@ -441,10 +343,6 @@ fn slug(s: &str) -> String {
         .collect::<Vec<_>>()
         .join("_")
 }
-
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
 
 async fn ensure_cair_source(pool: &PgPool) -> Result<Uuid, String> {
     if let Some(id) = sqlx::query_scalar::<_, Uuid>(
@@ -461,7 +359,7 @@ async fn ensure_cair_source(pool: &PgPool) -> Result<Uuid, String> {
     sqlx::query(
         "insert into sources (id, name, kind, notes)
          values ($1, 'CA Immunization Registry (CAIR)', 'registry',
-                 'Auto-created by vaccine import. Source: CDPH Smart Health Card.')",
+                 'Auto-created by CDPH vaccine import.')",
     )
     .bind(id)
     .execute(pool)
@@ -475,33 +373,30 @@ async fn upsert_immunization(
     source_id: Uuid,
     subject_id: Uuid,
     imm: &ParsedImmunization,
-    external_id: &str,
+    ext_id: &str,
 ) -> Result<(), String> {
     sqlx::query(
         "insert into immunizations
-             (id, subject_id, vaccine, code, code_system, occurred_at,
-              lot_number, status, source_id, external_id, source_synced_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
+             (id, subject_id, vaccine, occurred_at, dose_number,
+              status, source_id, external_id, source_synced_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,now())
          on conflict (source_id, external_id)
          where source_id is not null and external_id is not null
          do update set
              vaccine          = excluded.vaccine,
-             code             = excluded.code,
              occurred_at      = excluded.occurred_at,
-             lot_number       = excluded.lot_number,
+             dose_number      = excluded.dose_number,
              status           = excluded.status,
              source_synced_at = now()",
     )
     .bind(Uuid::now_v7())
     .bind(subject_id)
     .bind(&imm.vaccine)
-    .bind(&imm.cvx_code)
-    .bind(imm.cvx_code.as_ref().map(|_| "CVX"))
     .bind(imm.occurred_at)
-    .bind(&imm.lot_number)
+    .bind(imm.dose_number)
     .bind(&imm.status)
     .bind(source_id)
-    .bind(external_id)
+    .bind(ext_id)
     .execute(pool)
     .await
     .map_err(|e| format!("DB upsert error: {e}"))?;
