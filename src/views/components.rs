@@ -79,6 +79,19 @@ pub fn summary_panel(title: impl Render, body: Markup) -> Markup {
     }
 }
 
+/// Like `summary_panel` but with a "View all →" link in the title bar.
+pub fn summary_panel_linked(title: impl Render, href: impl Render, body: Markup) -> Markup {
+    html! {
+        section class="rounded-lg border border-line bg-surface p-4 shadow-xs" {
+            div class="flex items-baseline justify-between mb-2" {
+                h3 class="text-sm font-semibold tracking-tight text-ink" { (title) }
+                a href=(href) class="text-xs text-brand hover:underline shrink-0" { "View all →" }
+            }
+            (body)
+        }
+    }
+}
+
 /// A compact list inside a summary panel.
 pub fn panel_list(children: Markup) -> Markup {
     html! { ul class="space-y-1.5 text-sm text-ink" { (children) } }
