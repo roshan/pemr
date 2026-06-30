@@ -1,6 +1,7 @@
 use maud::{Markup, html};
 use time::OffsetDateTime;
 
+use crate::models::Subject;
 use crate::sync::SyncJob;
 use crate::views::components as c;
 use crate::views::layout::{Nav, shell};
@@ -8,12 +9,12 @@ use crate::views::layout::{Nav, shell};
 pub fn page(
     nav: &Nav<'_>,
     jobs: &[SyncJob],
+    subjects: &[Subject],
     import_result: Option<(&str, &str)>,
 ) -> Markup {
     let body = html! {
         (c::page_title("Sync"))
 
-        // Vaccine import section
         section class="mb-8" {
             (c::section_heading("Import vaccine records (CDPH)"))
 
@@ -43,6 +44,21 @@ pub fn page(
             }
 
             (c::form("/settings/sync/vaccine-import", "post", html! {
+                (c::field_with_hint(
+                    "Subject",
+                    "Required when the CDPH page shows \"Dependent Minor 1\" instead of a real name. Leave blank to auto-detect from the name on the page.",
+                    html! {
+                        select name="subject_id"
+                               class="rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-brand/40" {
+                            option value="" { "— auto-detect from page —" }
+                            @for s in subjects {
+                                option value=(s.id) {
+                                    (s.given_name) " " (s.family_name)
+                                }
+                            }
+                        }
+                    },
+                ))
                 (c::field(
                     "CDPH link(s) or page HTML",
                     html! {
@@ -55,7 +71,6 @@ pub fn page(
             }))
         }
 
-        // History of past imports / scheduled tasks
         @if !jobs.is_empty() {
             (c::lane(
                 html! { (c::section_heading("History")) },

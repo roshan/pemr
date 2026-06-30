@@ -3,9 +3,11 @@ use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Redirect, Response};
 use maud::Markup;
 use serde::Deserialize;
+use uuid::Uuid;
 
 use crate::error::AppResult;
 use crate::handlers::{AppState, load_subjects};
+use crate::models::empty_to_none;
 use crate::sync;
 use crate::viewer::ViewerContext;
 use crate::views::layout::Nav;
@@ -24,12 +26,14 @@ pub async fn page(
         current_subject: viewer.default_subject_id,
         viewer: &viewer,
     };
-    Ok(views::page(&nav, &jobs, None))
+    Ok(views::page(&nav, &jobs, &subjects, None))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct VaccineImportForm {
     pub urls: String,
+    #[serde(default)]
+    pub subject_id: String,
 }
 
 pub async fn import_vaccines(
@@ -38,9 +42,9 @@ pub async fn import_vaccines(
     Form(form): Form<VaccineImportForm>,
 ) -> AppResult<Markup> {
     let content = form.urls.trim().to_string();
+    let subject_override = empty_to_none(form.subject_id)
+        .and_then(|s| s.parse::<Uuid>().ok());
 
-    // Auto-detect: if the content starts with '<' it's pasted HTML for one person.
-    // Otherwise split on newlines and treat each non-empty line as a URL.
     let inputs: Vec<String> = if content.starts_with('<') {
         vec![content]
     } else {
@@ -52,7 +56,8 @@ pub async fn import_vaccines(
             .collect()
     };
 
-    let result = sync::vaccine::import_from_urls(&state.pool, inputs).await;
+    let result =
+        sync::vaccine::import_from_urls(&state.pool, inputs, subject_override).await;
 
     let (status, message) = match &result {
         Ok(msg) => ("ok", msg.clone()),
@@ -69,12 +74,9 @@ pub async fn import_vaccines(
         current_subject: viewer.default_subject_id,
         viewer: &viewer,
     };
-    Ok(views::page(&nav, &jobs, Some((status, &message))))
+    Ok(views::page(&nav, &jobs, &subjects, Some((status, &message))))
 }
 
-/// Trigger a scheduled task on-demand. Currently no tasks are scheduled
-/// (vaccine import is manual via the form), but the route stays live for
-/// future periodic tasks.
 pub async fn run_task(
     State(state): State<AppState>,
     Path(name): Path<String>,
