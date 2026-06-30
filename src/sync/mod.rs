@@ -42,10 +42,13 @@ pub async fn all_jobs(pool: &PgPool) -> Result<Vec<SyncJob>, sqlx::Error> {
 /// Records the result of a manually-triggered import into sync_jobs.
 /// Creates the row if it doesn't exist yet.
 pub async fn record_import(pool: &PgPool, name: &str, status: &str, message: &str) {
+    // next_run_at = far future so the scheduler never picks this up, but we
+    // can't use PostgreSQL 'infinity' — time::OffsetDateTime can't represent it
+    // and sqlx will error on deserialization.
     let _ = sqlx::query(
         "insert into sync_jobs (name, schedule_hours, last_started_at, last_finished_at,
                                 last_status, last_message, next_run_at)
-         values ($1, 0, now(), now(), $2, $3, 'infinity')
+         values ($1, 0, now(), now(), $2, $3, now() + interval '10 years')
          on conflict (name) do update set
              last_started_at  = now(),
              last_finished_at = now(),
