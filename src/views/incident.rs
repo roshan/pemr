@@ -132,7 +132,7 @@ pub fn detail_page(
                         form action=(format!("/incidents/{}/link-incident", incident.id)) method="post" {
                             div class="mb-3" {
                                 label class="block text-sm font-medium text-ink mb-1" { "Subject" }
-                                select name="subject_filter"
+                                select name="subject"
                                        class="rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-brand/40"
                                        hx-get=(format!("/incidents/{}/link-incident/candidates", incident.id))
                                        hx-target="#link-event-list"
