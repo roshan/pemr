@@ -105,6 +105,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             post(handlers::incidents::link_incident),
         )
         .route(
+            "/incidents/{id}/link-incident/candidates",
+            get(handlers::incidents::link_incident_candidates),
+        )
+        .route(
             "/incidents/{id}/linked-incidents/{other_id}",
             delete(handlers::incidents::unlink_incident),
         )
