@@ -100,6 +100,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/incidents/{id}/records/{rid}",
             delete(handlers::incidents::unlink_record),
         )
+        .route(
+            "/incidents/{id}/link-incident",
+            post(handlers::incidents::link_incident),
+        )
+        .route(
+            "/incidents/{id}/linked-incidents/{other_id}",
+            delete(handlers::incidents::unlink_incident),
+        )
         // records
         .route("/records", get(handlers::records::list).post(handlers::records::create))
         .route("/records/new", get(handlers::records::new))

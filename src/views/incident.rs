@@ -70,6 +70,8 @@ pub fn detail_page(
     touching_sources: &[Source],
     linked_records: &[Record],
     candidate_records: &[Record],
+    linked_incidents: &[Incident],
+    candidate_incidents: &[Incident],
 ) -> Markup {
     let body = html! {
         (c::card(html! {
@@ -97,6 +99,49 @@ pub fn detail_page(
                 div class="mt-3" { (c::prose(&incident.narrative)) }
             }
         }))
+
+        (c::lane(
+            html! { (c::section_heading("Linked events")) },
+            html! {
+                @if linked_incidents.is_empty() {
+                    (c::empty_state("No events linked yet."))
+                } @else {
+                    ul class="space-y-1.5" {
+                        @for other in linked_incidents {
+                            li class="flex items-center justify-between gap-3 text-sm" {
+                                div class="flex items-center gap-2" {
+                                    (c::badge_neutral(render_date_range(other.occurred_at, &other.occurred_precision, other.ended_at, &other.ended_precision)))
+                                    a href={ "/incidents/" (other.id) } class="font-medium" { (other.title) }
+                                }
+                                (c::button_subtle_danger("Unlink", c::HtmxDelete {
+                                    url: format!("/incidents/{}/linked-incidents/{}", incident.id, other.id),
+                                    target: "closest li",
+                                    swap: "outerHTML",
+                                    confirm: None,
+                                }))
+                            }
+                        }
+                    }
+                }
+
+                div class="mt-3" {
+                    (c::collapse_section("Link an event", html! {
+                        (c::form(format!("/incidents/{}/link-incident", incident.id), "post", html! {
+                            (c::field("Event", c::select_field("linked_incident_id", true, || html! {
+                                (c::select_option("", "— pick one —", false))
+                                @for other in candidate_incidents {
+                                    (c::select_option(other.id, html! {
+                                        (render_date_range(other.occurred_at, &other.occurred_precision, other.ended_at, &other.ended_precision))
+                                        " — " (other.title)
+                                    }, false))
+                                }
+                            })))
+                            (c::button_primary("Link"))
+                        }))
+                    }, linked_incidents.is_empty()))
+                }
+            },
+        ))
 
         (c::lane(
             html! { (c::section_heading("Linked records")) },
