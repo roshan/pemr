@@ -109,7 +109,10 @@ pub fn detail_page(
                     ul class="space-y-1.5" {
                         @for other in linked_incidents {
                             li class="flex items-center justify-between gap-3 text-sm" {
-                                div class="flex items-center gap-2" {
+                                div class="flex items-center gap-2 flex-wrap" {
+                                    @if other.subject_id != incident.subject_id {
+                                        (subject_badge(subjects, other.subject_id))
+                                    }
                                     (c::badge_neutral(render_date_range(other.occurred_at, &other.occurred_precision, other.ended_at, &other.ended_precision)))
                                     a href={ "/incidents/" (other.id) } class="font-medium" { (other.title) }
                                 }
@@ -131,6 +134,9 @@ pub fn detail_page(
                                 (c::select_option("", "— pick one —", false))
                                 @for other in candidate_incidents {
                                     (c::select_option(other.id, html! {
+                                        @if let Some(name) = subjects.iter().find(|s| s.id == other.subject_id).map(|s| &s.full_name) {
+                                            (name) " · "
+                                        }
                                         (render_date_range(other.occurred_at, &other.occurred_precision, other.ended_at, &other.ended_precision))
                                         " — " (other.title)
                                     }, false))
