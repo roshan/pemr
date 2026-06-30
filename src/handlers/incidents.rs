@@ -346,6 +346,41 @@ pub struct LinkIncidentForm {
     pub linked_incident_id: String,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub struct CandidateQuery {
+    pub subject: Option<Uuid>,
+}
+
+/// `GET /incidents/{id}/link-incident/candidates?subject=<uuid>` — partial
+/// HTML: a scrollable radio-button list of linkable events for the chosen
+/// subject, organised newest-first. Consumed by the htmx subject picker.
+pub async fn link_incident_candidates(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<CandidateQuery>,
+) -> AppResult<Markup> {
+    let Some(subject_id) = q.subject else {
+        return Ok(incident::candidates_empty("Select a subject above."));
+    };
+    let candidates = sqlx::query_as::<_, Incident>(&format!(
+        "select {INCIDENT_COLS} from incidents
+          where subject_id = $1
+            and id <> $2
+            and not exists (
+                select 1 from incident_links il
+                 where (il.incident_id = $2 and il.linked_incident_id = incidents.id)
+                    or (il.linked_incident_id = $2 and il.incident_id = incidents.id)
+            )
+          order by occurred_at desc nulls last, created_at desc
+          limit 200"
+    ))
+    .bind(subject_id)
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(incident::candidates_partial(&candidates))
+}
+
 pub async fn link_incident(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,

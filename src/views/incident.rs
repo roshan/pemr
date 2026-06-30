@@ -129,21 +129,26 @@ pub fn detail_page(
 
                 div class="mt-3" {
                     (c::collapse_section("Link an event", html! {
-                        (c::form(format!("/incidents/{}/link-incident", incident.id), "post", html! {
-                            (c::field("Event", c::select_field("linked_incident_id", true, || html! {
-                                (c::select_option("", "— pick one —", false))
-                                @for other in candidate_incidents {
-                                    (c::select_option(other.id, html! {
-                                        @if let Some(name) = subjects.iter().find(|s| s.id == other.subject_id).map(|s| &s.full_name) {
-                                            (name) " · "
-                                        }
-                                        (render_date_range(other.occurred_at, &other.occurred_precision, other.ended_at, &other.ended_precision))
-                                        " — " (other.title)
-                                    }, false))
+                        form action=(format!("/incidents/{}/link-incident", incident.id)) method="post" {
+                            div class="mb-3" {
+                                label class="block text-sm font-medium text-ink mb-1" { "Subject" }
+                                select name="subject_filter"
+                                       class="rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-brand/40"
+                                       hx-get=(format!("/incidents/{}/link-incident/candidates", incident.id))
+                                       hx-target="#link-event-list"
+                                       hx-trigger="change"
+                                       hx-include="this" {
+                                    option value="" { "— pick a subject —" }
+                                    @for s in subjects {
+                                        option value=(s.id) { (s.full_name) }
+                                    }
                                 }
-                            })))
-                            (c::button_primary("Link"))
-                        }))
+                            }
+                            div id="link-event-list" class="mb-3 rounded-md border border-line overflow-y-auto max-h-72" {
+                                p class="px-3 py-2 text-xs text-muted" { "Select a subject to see their events." }
+                            }
+                            (c::button_primary("Link selected"))
+                        }
                     }, linked_incidents.is_empty()))
                 }
             },
@@ -430,6 +435,57 @@ fn action_card(href: &str, title: &str, body: Markup) -> Markup {
                 span class="text-muted text-base font-bold group-hover:text-brand transition-colors" { "→" }
             }
             p class="mt-1 text-xs text-muted" { (body) }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Link-incident candidate partials (htmx swapped)
+// ---------------------------------------------------------------------------
+
+pub fn candidates_empty(msg: &str) -> Markup {
+    html! {
+        p class="px-3 py-2 text-xs text-muted" { (msg) }
+    }
+}
+
+/// Chronological radio-button list of candidate incidents for the link picker.
+/// Grouped by year for navigability. Swapped into `#link-event-list` via htmx.
+pub fn candidates_partial(candidates: &[Incident]) -> Markup {
+    if candidates.is_empty() {
+        return html! {
+            p class="px-3 py-2 text-xs text-muted" { "No linkable events for this subject." }
+        };
+    }
+
+    // Pre-group by year so maud doesn't need to mutate state.
+    let mut groups: Vec<(Option<i32>, Vec<&Incident>)> = Vec::new();
+    for c in candidates {
+        let year = c.occurred_at.map(|d| d.year());
+        if groups.last().map(|(y, _)| *y) == Some(year) {
+            groups.last_mut().unwrap().1.push(c);
+        } else {
+            groups.push((year, vec![c]));
+        }
+    }
+
+    html! {
+        @for (year, items) in &groups {
+            div class="sticky top-0 bg-slate-50 border-b border-line px-3 py-1 text-xs font-semibold text-muted" {
+                @match year { Some(y) => (y), None => "No date" }
+            }
+            @for c in items {
+                label class="flex items-center gap-3 px-3 py-2 hover:bg-slate-50 cursor-pointer border-b border-line last:border-0" {
+                    input type="radio" name="linked_incident_id" value=(c.id)
+                          class="shrink-0 accent-brand" {}
+                    span class="flex-1 min-w-0" {
+                        span class="block text-sm font-medium text-ink truncate" { (c.title) }
+                        span class="block text-xs text-muted" {
+                            (render_date_range(c.occurred_at, &c.occurred_precision, c.ended_at, &c.ended_precision))
+                        }
+                    }
+                }
+            }
         }
     }
 }
