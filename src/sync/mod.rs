@@ -53,7 +53,8 @@ pub async fn record_import(pool: &PgPool, name: &str, status: &str, message: &st
              last_started_at  = now(),
              last_finished_at = now(),
              last_status      = $2,
-             last_message     = $3",
+             last_message     = $3,
+             next_run_at      = now() + interval '10 years'",
     )
     .bind(name)
     .bind(status)
