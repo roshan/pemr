@@ -36,14 +36,19 @@ pub fn page(
             } else if due.is_empty() {
                 c::empty_state("Up to date on the routine schedule (nothing due).")
             } else {
-                c::panel_list(html! {
-                    @for d in due {
-                        (c::panel_list_item(
-                            html! { (d.family) " " (c::muted(format!("dose {} of the series", d.dose_number))) " " (status_badge(d.status)) },
-                            html! { "rec. " (d.due_on) },
-                        ))
+                html! {
+                    ul class="space-y-1.5 text-sm text-ink" {
+                        @for d in due {
+                            @let primary = html! { (d.family) " " (c::muted(format!("dose {}", d.dose_number))) };
+                            @let detail = html! { "rec. " (d.due_on) };
+                            @match d.status {
+                                "overdue" => (c::forecast_item_overdue(primary, detail)),
+                                "due"     => (c::forecast_item_due(primary, detail)),
+                                _         => (c::forecast_item_upcoming(primary, detail)),
+                            }
+                        }
                     }
-                })
+                }
             }))
 
             // Well-child visit cadence (age-based)

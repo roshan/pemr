@@ -99,6 +99,36 @@ pub fn muted(text: impl Render) -> Markup {
     html! { span class="text-xs text-muted" { (text) } }
 }
 
+/// A forecast row that is overdue — rose left-border + tinted background.
+pub fn forecast_item_overdue(primary: Markup, detail: Markup) -> Markup {
+    html! {
+        li class="flex items-baseline justify-between gap-3 rounded-r px-2 py-1 border-l-2 border-rose-400 bg-rose-50" {
+            span { (primary) }
+            span class="text-xs text-muted whitespace-nowrap" { (detail) }
+        }
+    }
+}
+
+/// A forecast row that is due now — amber left-border + tinted background.
+pub fn forecast_item_due(primary: Markup, detail: Markup) -> Markup {
+    html! {
+        li class="flex items-baseline justify-between gap-3 rounded-r px-2 py-1 border-l-2 border-amber-400 bg-amber-50" {
+            span { (primary) }
+            span class="text-xs text-muted whitespace-nowrap" { (detail) }
+        }
+    }
+}
+
+/// A forecast row that is upcoming — plain, no highlight.
+pub fn forecast_item_upcoming(primary: Markup, detail: Markup) -> Markup {
+    html! {
+        li class="flex items-baseline justify-between gap-3" {
+            span { (primary) }
+            span class="text-xs text-muted whitespace-nowrap" { (detail) }
+        }
+    }
+}
+
 /// A warning-toned badge (e.g. an abnormal lab flag, a due item).
 pub fn badge_warn(text: impl Render) -> Markup {
     html! { span class={(BADGE_BASE) " bg-amber-100 text-amber-800"} { (text) } }
