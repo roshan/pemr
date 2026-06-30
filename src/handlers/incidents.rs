@@ -214,17 +214,15 @@ pub async fn detail(
 
     let candidate_incidents = sqlx::query_as::<_, Incident>(&format!(
         "select {INCIDENT_COLS} from incidents
-          where subject_id = $1
-            and id <> $2
+          where id <> $1
             and not exists (
                 select 1 from incident_links il
-                 where (il.incident_id = $2 and il.linked_incident_id = incidents.id)
-                    or (il.linked_incident_id = $2 and il.incident_id = incidents.id)
+                 where (il.incident_id = $1 and il.linked_incident_id = incidents.id)
+                    or (il.linked_incident_id = $1 and il.incident_id = incidents.id)
             )
           order by occurred_at desc nulls last, created_at desc
-          limit 100"
+          limit 200"
     ))
-    .bind(incident.subject_id)
     .bind(id)
     .fetch_all(&state.pool)
     .await?;
