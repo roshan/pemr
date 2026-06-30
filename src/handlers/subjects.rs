@@ -234,6 +234,7 @@ async fn clinical_summary_for(
     .fetch_all(pool)
     .await?;
     Ok(subject::ClinicalSummary {
+        subject_id: s.id,
         no_known_allergies: s.no_known_allergies,
         allergies,
         medications,
