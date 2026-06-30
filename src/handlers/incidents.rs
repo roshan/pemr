@@ -199,6 +199,36 @@ pub async fn detail(
     .fetch_all(&state.pool)
     .await?;
 
+    let linked_incidents = sqlx::query_as::<_, Incident>(&format!(
+        "select {INCIDENT_COLS} from incidents
+          where id in (
+              select linked_incident_id from incident_links where incident_id = $1
+              union
+              select incident_id from incident_links where linked_incident_id = $1
+          )
+          order by occurred_at desc nulls last, created_at desc"
+    ))
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let candidate_incidents = sqlx::query_as::<_, Incident>(&format!(
+        "select {INCIDENT_COLS} from incidents
+          where subject_id = $1
+            and id <> $2
+            and not exists (
+                select 1 from incident_links il
+                 where (il.incident_id = $2 and il.linked_incident_id = incidents.id)
+                    or (il.linked_incident_id = $2 and il.incident_id = incidents.id)
+            )
+          order by occurred_at desc nulls last, created_at desc
+          limit 100"
+    ))
+    .bind(incident.subject_id)
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+
     let nav = Nav {
         title: &incident.title,
         current_path: "/incidents",
@@ -213,6 +243,8 @@ pub async fn detail(
         &touching_sources,
         &linked,
         &candidates,
+        &linked_incidents,
+        &candidate_incidents,
     ))
 }
 
@@ -308,6 +340,47 @@ pub async fn unlink_record(
         .bind(rid)
         .execute(&state.pool)
         .await?;
+    Ok(StatusCode::OK)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinkIncidentForm {
+    pub linked_incident_id: String,
+}
+
+pub async fn link_incident(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Form(form): Form<LinkIncidentForm>,
+) -> AppResult<Response> {
+    let other_id = Uuid::parse_str(form.linked_incident_id.trim())
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    // Store one direction; queries union both directions.
+    sqlx::query(
+        "insert into incident_links (incident_id, linked_incident_id)
+         values ($1, $2)
+         on conflict do nothing",
+    )
+    .bind(id)
+    .bind(other_id)
+    .execute(&state.pool)
+    .await?;
+    Ok(Redirect::to(&format!("/incidents/{id}")).into_response())
+}
+
+pub async fn unlink_incident(
+    State(state): State<AppState>,
+    Path((id, other_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<StatusCode> {
+    sqlx::query(
+        "delete from incident_links
+          where (incident_id = $1 and linked_incident_id = $2)
+             or (incident_id = $2 and linked_incident_id = $1)",
+    )
+    .bind(id)
+    .bind(other_id)
+    .execute(&state.pool)
+    .await?;
     Ok(StatusCode::OK)
 }
 
