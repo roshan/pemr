@@ -24,6 +24,7 @@ pub fn page(
     due: &[DueItem],
     well_visits: &[WellVisit],
     has_dob: bool,
+    forecast_applicable: bool,
 ) -> Markup {
     let body = html! {
         (c::page_title(format!("{} — immunizations", subject.full_name)))
@@ -33,6 +34,9 @@ pub fn page(
             // Forecast
             (c::summary_panel("Due / forecast", if !has_dob {
                 c::alert_info("Set this subject's date of birth to forecast which vaccines are due.")
+            } else if !forecast_applicable {
+                c::alert_info("The routine childhood immunization forecast applies through age 18. \
+                    Adult immunization schedules aren't modeled here.")
             } else if due.is_empty() {
                 c::empty_state("Up to date on the routine schedule (nothing due).")
             } else {
@@ -51,8 +55,8 @@ pub fn page(
                 }
             }))
 
-            // Well-child visit cadence (age-based)
-            @if has_dob {
+            // Well-child visit cadence (age-based) — pediatric, so minors only.
+            @if has_dob && forecast_applicable {
                 (c::summary_panel("Well-child visits (by age)", if well_visits.is_empty() {
                     c::empty_state("No routine well-child visits recommended in the next year.")
                 } else {
