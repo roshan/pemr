@@ -7,8 +7,8 @@ use uuid::Uuid;
 use crate::error::{AppError, AppResult};
 use crate::handlers::{AppState, load_subjects};
 use crate::models::{
-    Allergy, Appointment, CareTeamMember, Condition, Immunization, Incident, Medication, Record,
-    Subject, VitalRow, empty_to_none, parse_date,
+    Allergy, Appointment, CareTeamMember, Condition, Immunization, Incident, InsuranceCoverageRow,
+    Medication, Record, Subject, VitalRow, empty_to_none, parse_date,
 };
 use crate::viewer::ViewerContext;
 use crate::views::layout::Nav;
@@ -233,6 +233,16 @@ async fn clinical_summary_for(
     .bind(s.id)
     .fetch_all(pool)
     .await?;
+    let insurance = sqlx::query_as::<_, InsuranceCoverageRow>(
+        "select p.payer_name, p.plan_name, p.plan_kind,
+                si.relationship, coalesce(si.member_id, p.member_id) as member_id
+           from subject_insurance si join insurance_plans p on p.id = si.plan_id
+          where si.subject_id = $1
+          order by si.is_primary desc, p.payer_name",
+    )
+    .bind(s.id)
+    .fetch_all(pool)
+    .await?;
     Ok(subject::ClinicalSummary {
         subject_id: s.id,
         no_known_allergies: s.no_known_allergies,
@@ -243,6 +253,7 @@ async fn clinical_summary_for(
         vitals,
         upcoming_appts,
         care_team,
+        insurance,
         vaccines_due,
     })
 }

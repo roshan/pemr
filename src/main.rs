@@ -1,3 +1,7 @@
+// The `/api/v1` discovery doc is one big `json!{…}` literal; each endpoint row
+// deepens the macro's recursive expansion, so the default limit (128) is too low.
+#![recursion_limit = "256"]
+
 mod api_auth;
 mod config;
 mod db;
@@ -197,6 +201,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // providers (PEMR-17)
         .route("/providers", get(handlers::providers::list).post(handlers::providers::create))
         .route("/providers/{id}/edit", get(handlers::providers::edit_form).post(handlers::providers::edit))
+        // insurance (shared cards + per-subject coverage)
+        .route("/insurance", get(handlers::insurance::list).post(handlers::insurance::create))
+        .route("/insurance/{id}", get(handlers::insurance::detail))
+        .route(
+            "/insurance/{id}/edit",
+            get(handlers::insurance::edit_form).post(handlers::insurance::edit),
+        )
+        .route("/insurance/{id}/subjects", post(handlers::insurance::cover_subject))
+        .route(
+            "/insurance/{id}/subjects/{sid}/remove",
+            post(handlers::insurance::uncover_subject),
+        )
         // settings: API keys
         .route(
             "/settings/api-keys",
@@ -318,6 +334,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/api/v1/subject-relationships",
             get(handlers::api::subject_relationships::list)
                 .post(handlers::api::subject_relationships::create),
+        )
+        .route(
+            "/api/v1/insurance-plans",
+            get(handlers::api::insurance_plans::list).post(handlers::api::insurance_plans::create),
+        )
+        .route(
+            "/api/v1/insurance-plans/{id}",
+            get(handlers::api::insurance_plans::detail),
+        )
+        .route(
+            "/api/v1/subject-insurance",
+            get(handlers::api::subject_insurance::list)
+                .post(handlers::api::subject_insurance::create),
         )
         .route("/api/v1/search", get(handlers::api::search::search))
         .route("/api/v1/import/fhir", post(handlers::api::import::fhir))

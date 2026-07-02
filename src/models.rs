@@ -132,6 +132,17 @@ pub struct CareTeamMember {
     pub specialty: Option<String>,
 }
 
+/// A subject's insurance coverage joined for the chart (subject_insurance →
+/// insurance_plans). `member_id` coalesces the per-person id over the card's.
+#[derive(Debug, FromRow)]
+pub struct InsuranceCoverageRow {
+    pub payer_name: String,
+    pub plan_name: Option<String>,
+    pub plan_kind: String,
+    pub relationship: String,
+    pub member_id: Option<String>,
+}
+
 pub const RECORD_KINDS: &[&str] = &[
     "xray", "mri", "ct", "ultrasound", "report", "lab", "note", "prescription", "photo", "document", "other",
 ];
@@ -493,6 +504,52 @@ mod clinical_model {
         pub created_at: OffsetDateTime,
     }
 
+    /// An insurance card / policy. Shared reference data (a family shares one
+    /// card), so NO subject_id — covered people are linked via `SubjectInsurance`.
+    #[derive(Debug, Clone, FromRow, Serialize)]
+    pub struct InsurancePlan {
+        pub id: Uuid,
+        pub payer_name: String,
+        pub plan_name: Option<String>,
+        pub plan_type: Option<String>,
+        pub member_id: Option<String>,
+        pub group_number: Option<String>,
+        pub subscriber_name: Option<String>,
+        pub plan_kind: String,
+        pub rx_bin: Option<String>,
+        pub rx_pcn: Option<String>,
+        pub rx_group: Option<String>,
+        pub payer_phone: Option<String>,
+        pub effective_date: Option<Date>,
+        pub expiration_date: Option<Date>,
+        pub notes: String,
+        pub source_id: Option<Uuid>,
+        pub external_id: Option<String>,
+        pub external_url: Option<String>,
+        #[serde(with = "time::serde::rfc3339::option")]
+        pub source_synced_at: Option<OffsetDateTime>,
+        #[serde(with = "time::serde::rfc3339")]
+        pub created_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339")]
+        pub updated_at: OffsetDateTime,
+    }
+
+    /// Coverage link (subject ↔ insurance plan). Mirrors `SubjectProvider`:
+    /// composite PK (subject_id, plan_id), relationship + per-person id as attrs.
+    #[derive(Debug, Clone, FromRow, Serialize)]
+    pub struct SubjectInsurance {
+        pub subject_id: Uuid,
+        pub plan_id: Uuid,
+        pub relationship: String,
+        pub member_id: Option<String>,
+        pub is_primary: bool,
+        pub effective_date: Option<Date>,
+        pub expiration_date: Option<Date>,
+        pub notes: String,
+        #[serde(with = "time::serde::rfc3339")]
+        pub created_at: OffsetDateTime,
+    }
+
     // --- Vocabularies (text + const &[&str], never pg enums) ---
 
     /// Date-precision values used by `*_precision` columns (onset, effective, …).
@@ -539,4 +596,13 @@ mod clinical_model {
         "emergency_contact",
         "other",
     ];
+
+    // Insurance
+    pub const INSURANCE_PLAN_TYPES: &[&str] =
+        &["ppo", "hmo", "epo", "pos", "hdhp", "medicare", "medicaid", "tricare", "other"];
+    pub const INSURANCE_PLAN_KINDS: &[&str] =
+        &["medical", "dental", "vision", "pharmacy", "other"];
+    /// Beneficiary's relationship to the policyholder (FHIR Coverage.relationship).
+    pub const INSURANCE_RELATIONSHIPS: &[&str] =
+        &["self", "spouse", "child", "dependent", "other"];
 }
