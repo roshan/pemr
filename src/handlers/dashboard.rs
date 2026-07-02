@@ -9,9 +9,9 @@ use time::{Date, Duration, Month};
 
 use crate::error::{AppError, AppResult};
 use crate::handlers::{AppState, load_subjects};
-use crate::models::{Incident, Record, parse_subject_filter};
+use crate::models::{Incident, Record, Subject, parse_subject_filter};
 use crate::viewer::ViewerContext;
-use crate::views::dashboard::{self, DashboardData};
+use crate::views::dashboard::{self, ClinicalSnapshot, DashboardData};
 use crate::views::layout::Nav;
 
 #[derive(Debug, Deserialize, Default)]
@@ -37,6 +37,7 @@ pub async fn index(
     let timeline_total = count_incidents(&state.pool, current_subject).await?;
     let recent_incidents = recent_incidents(&state.pool, current_subject).await?;
     let recent_records = recent_records(&state.pool, current_subject).await?;
+    let clinical = clinical_snapshot(&state.pool, current_subject).await?;
 
     let nav = Nav {
         title: "Dashboard",
@@ -51,8 +52,45 @@ pub async fn index(
         timeline_total,
         recent_incidents: &recent_incidents,
         recent_records: &recent_records,
+        clinical,
     };
     Ok(dashboard::render(&nav, &data))
+}
+
+/// Build the home-dashboard clinical snapshot for a single scoped subject.
+/// `None` for the all-subjects view, or when the subject has no clinical data to
+/// surface (no active problems/meds/allergies, no immunizations, vitals, or
+/// upcoming appointments, and nothing due) — the plain empty states cover that
+/// case. Reuses the same load the subject chart uses, so counts agree exactly.
+async fn clinical_snapshot(
+    pool: &PgPool,
+    subject: Option<Uuid>,
+) -> AppResult<Option<ClinicalSnapshot>> {
+    let Some(id) = subject else { return Ok(None) };
+    let s = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+    let cs = crate::handlers::subjects::clinical_summary_for(pool, &s).await?;
+    let snap = ClinicalSnapshot {
+        subject_id: id,
+        problems: cs.conditions.len(),
+        medications: cs.medications.len(),
+        allergies: cs.allergies.len(),
+        immunizations: cs.immunizations.len(),
+        vitals: cs.vitals.len(),
+        appointments: cs.upcoming_appts.len(),
+        vaccines_due: cs.vaccines_due,
+    };
+    let has_any = snap.problems
+        + snap.medications
+        + snap.allergies
+        + snap.immunizations
+        + snap.vitals
+        + snap.appointments
+        > 0
+        || snap.vaccines_due > 0;
+    Ok(has_any.then_some(snap))
 }
 
 pub async fn healthz() -> &'static str {

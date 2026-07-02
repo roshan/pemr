@@ -55,6 +55,26 @@ pub struct DashboardData<'a> {
     pub timeline_total: i64,
     pub recent_incidents: &'a [Incident],
     pub recent_records: &'a [Record],
+    /// Subject-scoped clinical at-a-glance, shown only on the home dashboard
+    /// (`/`) when a single subject is in scope and has clinical data. `None` on
+    /// the all-subjects view and on the per-subject chart (which renders the
+    /// full clinical summary itself).
+    pub clinical: Option<ClinicalSnapshot>,
+}
+
+/// Counts behind the home-dashboard clinical snapshot. Built by the handler from
+/// the same `ClinicalSummary` load the subject chart uses, so the two never
+/// disagree on what counts as active / due.
+pub struct ClinicalSnapshot {
+    pub subject_id: Uuid,
+    pub problems: usize,
+    pub medications: usize,
+    pub allergies: usize,
+    pub immunizations: usize,
+    pub vitals: usize,
+    pub appointments: usize,
+    /// Vaccines due or overdue (forecast, minors only) → the "N due" tile badge.
+    pub vaccines_due: usize,
 }
 
 const DASHBOARD_TIMELINE_LIMIT: usize = 12;
@@ -83,6 +103,10 @@ pub fn body(nav: &Nav<'_>, data: &DashboardData<'_>, show_timeline: bool) -> Mar
                 }
             }
             div #results class="mt-3" {}
+        }
+
+        @if let Some(snap) = &data.clinical {
+            (clinical_snapshot(snap))
         }
 
         @if show_timeline {
@@ -193,6 +217,36 @@ fn record_card(rec: &Record, subjects: &[Subject]) -> Markup {
                     (c::badge_neutral(render_date(rec.occurred_at, &rec.occurred_precision)))
                 }))
             }
+        }
+    }
+}
+
+/// A subject-scoped clinical at-a-glance for the home dashboard: a row of count
+/// tiles (problems / meds / allergies / immunizations / vitals / appointments)
+/// so a subject whose data is purely clinical — e.g. an immunizations-only
+/// import — doesn't land on an empty-looking page of "No events / No records".
+/// Each tile links to the best detail view; the full chart is one click away.
+fn clinical_snapshot(s: &ClinicalSnapshot) -> Markup {
+    let sid = s.subject_id;
+    let chart = format!("/subjects/{sid}");
+    let imm = format!("/subjects/{sid}/immunizations");
+    let appts = format!("/subjects/{sid}/appointments");
+    html! {
+        section class="mb-6" {
+            div class="flex items-baseline justify-between mb-2" {
+                (c::section_heading("Clinical snapshot"))
+                (c::link_subtle(&chart, "Open chart →"))
+            }
+            (c::stat_grid(html! {
+                (c::stat_tile(&chart, s.problems, "Problems", s.problems > 0, html! {}))
+                (c::stat_tile(&chart, s.medications, "Medications", s.medications > 0, html! {}))
+                (c::stat_tile(&chart, s.allergies, "Allergies", s.allergies > 0, html! {}))
+                (c::stat_tile(&imm, s.immunizations, "Immunizations", s.immunizations > 0, html! {
+                    @if s.vaccines_due > 0 { (c::badge_warn(format!("{} due", s.vaccines_due))) }
+                }))
+                (c::stat_tile(&chart, s.vitals, "Vitals & labs", s.vitals > 0, html! {}))
+                (c::stat_tile(&appts, s.appointments, "Appointments", s.appointments > 0, html! {}))
+            }))
         }
     }
 }

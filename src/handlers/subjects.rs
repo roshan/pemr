@@ -164,13 +164,15 @@ pub async fn detail(
         timeline_total,
         recent_incidents: &recent_incidents,
         recent_records: &recent_records,
+        // The chart renders the full clinical summary below; no snapshot needed.
+        clinical: None,
     };
     Ok(subject::dashboard_page(&nav, &s, &summary, &data, &timeline))
 }
 
-/// Loads the clinical summary (Phase 1/2 tables) shared by the subject chart
-/// and the printable summary.
-async fn clinical_summary_for(
+/// Loads the clinical summary (Phase 1/2 tables) shared by the subject chart,
+/// the printable summary, and the home-dashboard clinical snapshot.
+pub(crate) async fn clinical_summary_for(
     pool: &sqlx::PgPool,
     s: &Subject,
 ) -> Result<subject::ClinicalSummary, sqlx::Error> {

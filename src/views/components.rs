@@ -92,6 +92,39 @@ pub fn summary_panel_linked(title: impl Render, href: impl Render, body: Markup)
     }
 }
 
+/// Dense grid wrapper for `stat_tile`s (the home-dashboard clinical snapshot).
+pub fn stat_grid(children: Markup) -> Markup {
+    html! { div class="stat-grid" { (children) } }
+}
+
+/// A compact count tile: a big number, a label underneath, and an optional
+/// trailing badge (e.g. "2 due"), wrapped as a link. `emphasis` inks a non-zero
+/// count and mutes a zero, so a wall of zeros reads as quiet. Used by the
+/// home-dashboard clinical snapshot; class strings stay here per the rules.
+pub fn stat_tile(
+    href: impl Render,
+    value: impl Render,
+    label: impl Render,
+    emphasis: bool,
+    badge: Markup,
+) -> Markup {
+    let num_cls = if emphasis {
+        "text-2xl font-semibold tracking-tight text-ink"
+    } else {
+        "text-2xl font-semibold tracking-tight text-muted"
+    };
+    html! {
+        a href=(href)
+          class="block rounded-lg border border-line bg-surface p-3 shadow-xs hover:border-brand hover:no-underline" {
+            div class="flex items-baseline justify-between gap-1" {
+                span class=(num_cls) { (value) }
+                (badge)
+            }
+            span class="mt-0.5 block text-xs text-muted" { (label) }
+        }
+    }
+}
+
 /// A compact list inside a summary panel.
 pub fn panel_list(children: Markup) -> Markup {
     html! { ul class="space-y-1.5 text-sm text-ink" { (children) } }
