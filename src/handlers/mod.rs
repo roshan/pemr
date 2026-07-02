@@ -12,6 +12,7 @@ pub mod care_team;
 pub mod clinical;
 pub mod dashboard;
 pub mod incidents;
+pub mod insurance;
 pub mod providers;
 pub mod records;
 pub mod reminders;

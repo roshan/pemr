@@ -6,6 +6,7 @@ pub mod dashboard;
 pub mod growth;
 pub mod immunizations;
 pub mod incident;
+pub mod insurance;
 pub mod layout;
 pub mod provider;
 pub mod record;

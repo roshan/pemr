@@ -1,7 +1,8 @@
 use maud::{Markup, html};
 
 use crate::models::{
-    Allergy, Appointment, CareTeamMember, Condition, Immunization, Medication, Subject, VitalRow,
+    Allergy, Appointment, CareTeamMember, Condition, Immunization, InsuranceCoverageRow, Medication,
+    Subject, VitalRow,
 };
 use crate::views::components as c;
 use crate::views::dashboard::{self, DashboardData};
@@ -98,6 +99,7 @@ pub struct ClinicalSummary {
     pub vitals: Vec<VitalRow>,
     pub upcoming_appts: Vec<Appointment>,
     pub care_team: Vec<CareTeamMember>,
+    pub insurance: Vec<InsuranceCoverageRow>,
     /// Vaccines due or overdue (from the forecast), for the panel badge.
     pub vaccines_due: usize,
 }
@@ -200,6 +202,21 @@ fn clinical_summary(cs: &ClinicalSummary) -> Markup {
                         },
                         html! { (m.role) },
                     )), cs.care_team.len(), Some(format!("/subjects/{}/care-team", cs.subject_id)))
+                }))
+                (c::summary_panel_linked("Insurance", "/insurance",
+                if cs.insurance.is_empty() {
+                    c::empty_state("No insurance recorded")
+                } else {
+                    truncated_list(cs.insurance.iter().map(|ins| c::panel_list_item(
+                        html! {
+                            (ins.payer_name)
+                            @if let Some(pn) = &ins.plan_name { " " (c::muted(pn)) }
+                        },
+                        html! {
+                            @if let Some(m) = &ins.member_id { (m) " · " }
+                            (ins.plan_kind) " · " (ins.relationship)
+                        },
+                    )), cs.insurance.len(), Some("/insurance".to_string()))
                 }))
             }))
         }
