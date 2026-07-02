@@ -45,6 +45,19 @@ pub struct DueItem {
 const DAYS_PER_MONTH: f64 = 30.4375;
 /// Grace window after the recommended date before a dose reads as "overdue".
 const OVERDUE_GRACE_DAYS: i64 = 28;
+/// The routine childhood/adolescent schedule applies through age 18. Adult
+/// immunization schedules aren't modeled here, so forecasting the childhood
+/// schedule for a grown-up just flags every long-past dose as "overdue" (noise).
+/// Callers gate on this age.
+const MAX_FORECAST_AGE_YEARS: f64 = 19.0;
+
+/// Whether the routine childhood-schedule forecast is meaningful for someone
+/// born on `dob` as of `today` — i.e. they're not yet an adult. Used to gate
+/// both the forecast list and the chart's "N due" badge.
+pub fn forecast_applies(dob: Date, today: Date) -> bool {
+    let age_years = (today.to_julian_day() - dob.to_julian_day()) as f64 / 365.25;
+    age_years < MAX_FORECAST_AGE_YEARS
+}
 
 fn matches(s: &VaccineSchedule, imm: &Immunization) -> bool {
     if let Some(code) = imm.code.as_deref() {
@@ -66,6 +79,11 @@ fn add_months(dob: Date, months: f64) -> Date {
 /// none if the family's series is complete). `today` is injected so the caller
 /// controls the clock.
 pub fn forecast(dob: Date, imms: &[Immunization], today: Date) -> Vec<DueItem> {
+    // Adults are past the routine childhood schedule — don't forecast, else every
+    // childhood dose with no record reads as "overdue" for a grown-up.
+    if !forecast_applies(dob, today) {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     for s in SCHEDULE {
         let received = imms
@@ -156,4 +174,36 @@ pub fn well_child(dob: Date, today: Date) -> Vec<WellVisit> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::macros::date;
+
+    #[test]
+    fn adults_get_no_forecast() {
+        // A grown-up (b. 1988) is past the routine childhood schedule: no forecast,
+        // so the chart's "N due" badge is 0 rather than flagging childhood doses.
+        let dob = date!(1988 - 01 - 28);
+        let today = date!(2026 - 07 - 01);
+        assert!(!forecast_applies(dob, today));
+        assert!(forecast(dob, &[], today).is_empty());
+    }
+
+    #[test]
+    fn children_still_forecast() {
+        // A ~2.5yo with no recorded vaccines still gets overdue/due items.
+        let dob = date!(2024 - 01 - 01);
+        let today = date!(2026 - 07 - 01);
+        assert!(forecast_applies(dob, today));
+        assert!(!forecast(dob, &[], today).is_empty());
+    }
+
+    #[test]
+    fn cutoff_is_nineteenth_birthday() {
+        let dob = date!(2007 - 07 - 01);
+        assert!(forecast_applies(dob, date!(2026 - 06 - 30))); // just under 19
+        assert!(!forecast_applies(dob, date!(2026 - 07 - 02))); // just over 19
+    }
 }

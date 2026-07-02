@@ -298,13 +298,17 @@ pub async fn immunizations(
     .bind(id)
     .fetch_all(&state.pool)
     .await?;
+    let now = crate::peds::today();
     let (due, well_visits) = match s.dob {
         Some(dob) => (
-            crate::peds::forecast(dob, &received, crate::peds::today()),
-            crate::peds::well_child(dob, crate::peds::today()),
+            crate::peds::forecast(dob, &received, now),
+            crate::peds::well_child(dob, now),
         ),
         None => (Vec::new(), Vec::new()),
     };
+    // The routine childhood forecast only applies to minors; adults get an
+    // explanatory note instead of a misleading "up to date" / "N due".
+    let forecast_applicable = s.dob.map(|d| crate::peds::forecast_applies(d, now)).unwrap_or(false);
     let nav = Nav {
         title: &s.full_name,
         current_path: "/subjects",
@@ -319,6 +323,7 @@ pub async fn immunizations(
         &due,
         &well_visits,
         s.dob.is_some(),
+        forecast_applicable,
     ))
 }
 
