@@ -12,9 +12,14 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs \
 # 2. Real sources. A src change invalidates only from here down; target/ already
 #    holds the compiled deps, so cargo recompiles just the personal-emr crate.
 #    (migrations/ must be present here — sqlx::migrate! reads it at compile time.)
+#    The `touch` is REQUIRED, not optional: BuildKit normalizes COPY mtimes, so
+#    without it cargo thinks the real src is older than the stub build's artifacts
+#    and ships the stub binary. Touching forces a rebuild of the app crate (deps,
+#    whose sources live in the registry cache, are untouched and stay cached).
 COPY migrations ./migrations
 COPY src ./src
-RUN cargo build --release --locked --bin personal-emr
+RUN find src -name '*.rs' -exec touch {} + \
+    && cargo build --release --locked --bin personal-emr
 
 FROM gcr.io/distroless/cc-debian12:nonroot
 WORKDIR /app
