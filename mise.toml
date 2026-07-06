@@ -46,23 +46,34 @@ depends = ["css"]
 run = "mkdir -p $FILES_DIR && cargo run"
 
 [tasks.build]
-description = "Build the amd64 container image (CSS recompiled first)"
+description = "Build the amd64 container image LOCALLY (for local container testing only; deploy uses skybuild). CSS recompiled first."
 depends = ["css"]
 run = "docker build --platform linux/amd64 -t personal-emr:latest -f deploy/Dockerfile ."
 
 [tasks.deploy]
-description = "Build, push to kant registry, and (re)deploy the quadlet. The DB password lives in ~/.config/personal-emr/env on kant; deploys do not touch it."
-depends = ["build"]
+description = "Build on tb-0-0 via skybuild + push to the kant registry, then (re)deploy the quadlet. Needs SKYBUILD_TOKEN. The DB password lives in ~/.config/personal-emr/env on kant; deploys do not touch it."
+depends = ["css"]
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
 
-REGISTRY=kant.internal.roshangeorge.dev:5000
-IMAGE=$REGISTRY/personal-emr:latest
+: "${SKYBUILD_TOKEN:?set SKYBUILD_TOKEN — get it via: kubectl --context tb-0-0 -n skybuild get secret skybuild-secrets -o jsonpath='{.data.auth-token}' | base64 -d}"
 
-echo "==> tag + push"
-docker tag personal-emr:latest "$IMAGE"
-docker push "$IMAGE"
+# skybuild builds *committed HEAD*, not the working tree. The css dep just regenerated
+# static/vendor/app.css; if that (or anything else) is uncommitted, the build would ship
+# stale/other-than-HEAD state. Refuse and tell the user to commit first.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "working tree is dirty — skybuild builds committed HEAD, not your working copy." >&2
+  echo "commit your changes (including any regenerated static/vendor/app.css) and re-run 'mise run deploy'." >&2
+  echo >&2
+  git status --short >&2
+  exit 1
+fi
+
+echo "==> build on tb-0-0 via skybuild (native amd64) + push to kant/tb-0-0 registries"
+# Builds committed HEAD per skybuild.toml, streams logs, and exits non-zero on failure
+# (so a bad build never reaches the restart below). Pushes :latest + git-<sha>.
+skybuild build --repo personal-emr
 
 echo "==> ensure files dir + ssh dirs on kant"
 ssh kant "mkdir -p ~/personal-emr/files ~/.config/containers/systemd ~/.config/systemd/user ~/.local/bin"

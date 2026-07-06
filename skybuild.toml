@@ -1,0 +1,24 @@
+# skybuild build config — builds the image on tb-0-0 (native amd64) and pushes it to
+# the kant registry that personal-emr's quadlet pulls from. skybuild NEVER deploys;
+# `mise run deploy` builds via skybuild, then restarts the quadlet on kant.
+# Integration guide: KB:SKYBUILD:guides/integration
+name = "personal-emr"
+
+# Push-only mirror (no [source] block) — builds are triggered by `skybuild build` from
+# `mise run deploy`, not by GitHub CI. skybuild builds *committed HEAD*, so the deploy
+# task regenerates + requires a committed static/vendor/app.css before it runs.
+# To enable webhook/poll CI later, add a [source] with upstream + watch + refs
+# (see KB:SKYBUILD:guides/integration §2 and §3c).
+
+[[artifact]]
+type       = "docker"
+dockerfile = "deploy/Dockerfile"   # not the repo root — the Dockerfile lives under deploy/
+context    = "."
+# :latest is what the kant quadlet pulls (Image=localhost:5000/personal-emr:latest,
+# --pull=always). git-<sha> gives per-commit traceability so a deployed image ties
+# back to a commit.
+tags = ["latest", "git-{short_sha}"]
+push = [
+  "100.64.0.2:5000/personal-emr",    # kant registry — what the quadlet pulls (== localhost:5000 on kant)
+  "100.64.0.10:30500/personal-emr",  # tb-0-0 registry — skybuild's home registry (per-commit archive)
+]

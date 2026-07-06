@@ -21,9 +21,12 @@ cargo run
 ## Deploy
 
 ```sh
+mise run css            # regenerate the Tailwind bundle
+git commit -am '...'    # skybuild builds committed HEAD
+export SKYBUILD_TOKEN=$(kubectl --context tb-0-0 -n skybuild get secret skybuild-secrets -o jsonpath='{.data.auth-token}' | base64 -d)
 mise run deploy
 ```
 
-Builds the image for amd64, pushes to `kant.internal.roshangeorge.dev:5000`, scps the quadlet + backup units, restarts the service on kant.
+`mise run deploy` builds the amd64 image on **skybuild** (the tb-0-0 build service — see `skybuild.toml`), which pushes it to the kant registry; then it scps the quadlet + backup units and restarts the service on kant. It refuses to build a dirty tree, since skybuild builds committed HEAD, not your working copy — so commit any regenerated CSS first.
 
 Cloudflare hostname + Access policy are configured manually in the Zero Trust dashboard the first time.
