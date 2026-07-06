@@ -2,7 +2,7 @@ use maud::{Markup, html};
 use time::OffsetDateTime;
 
 use crate::models::Subject;
-use crate::sync::SyncJob;
+use crate::sync::{self, SyncJob};
 use crate::views::components as c;
 use crate::views::layout::{Nav, shell};
 
@@ -10,65 +10,27 @@ pub fn page(
     nav: &Nav<'_>,
     jobs: &[SyncJob],
     subjects: &[Subject],
+    provider_key: &str,
     import_result: Option<(&str, &str)>,
 ) -> Markup {
     let body = html! {
         (c::page_title("Sync"))
 
-        section class="mb-8" {
-            (c::section_heading("Import vaccine records (CDPH)"))
-
-            div class="mb-4 space-y-2 text-sm text-muted" {
-                p {
-                    strong class="text-ink" { "Option A — paste the link(s) from the CDPH email" }
-                    ", one per line. Links expire in 24 h — import before they do."
-                }
-                p {
-                    strong class="text-ink" { "Option B — paste the page HTML" }
-                    " if Option A fails: open the link in a browser, press "
-                    code class="text-xs bg-slate-100 px-1 rounded" { "F12" }
-                    " → Elements tab → right-click the "
-                    code class="text-xs bg-slate-100 px-1 rounded" { "<html>" }
-                    " node → Copy → Copy outerHTML, then paste below. One person at a time."
-                }
-            }
-
-            @if let Some((status, message)) = import_result {
-                div class="mb-4" {
-                    @if status == "ok" {
-                        (c::card(html! { p class="text-sm text-ink" { (message) } }))
-                    } @else {
-                        (c::alert_danger(message))
+        section class="mb-6 max-w-xl" {
+            (c::field_with_hint(
+                "Sync source",
+                "Choose which portal to import from. More sources will appear here as we add them.",
+                c::hx_select("provider", "/settings/sync/form", "#sync-form", html! {
+                    @for p in sync::SYNC_PROVIDERS {
+                        (c::select_option(p.key, p.label, p.key == provider_key))
                     }
-                }
-            }
+                }),
+            ))
+        }
 
-            (c::form("/settings/sync/vaccine-import", "post", html! {
-                (c::field_with_hint(
-                    "Subject",
-                    "Required when the CDPH page shows \"Dependent Minor 1\" instead of a real name. Leave blank to auto-detect from the name on the page.",
-                    html! {
-                        select name="subject_id"
-                               class="rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-brand/40" {
-                            option value="" { "— auto-detect from page —" }
-                            @for s in subjects {
-                                option value=(s.id) {
-                                    (s.given_name) " " (s.family_name)
-                                }
-                            }
-                        }
-                    },
-                ))
-                (c::field(
-                    "CDPH link(s) or page HTML",
-                    html! {
-                        textarea name="urls" rows="5"
-                            placeholder="https://myvaccinerecord.cdph.ca.gov/qr/en/DVR/…\nhttps://myvaccinerecord.cdph.ca.gov/qr/en/DVR/…"
-                            class="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm font-mono text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-brand/40" {}
-                    },
-                ))
-                (c::button_primary("Import"))
-            }))
+        // Swapped in place by the picker; the picker itself lives outside so it persists.
+        div id="sync-form" {
+            (provider_form(provider_key, subjects, import_result))
         }
 
         @if !jobs.is_empty() {
@@ -93,6 +55,86 @@ pub fn page(
         }
     };
     shell(nav, body)
+}
+
+/// The import form for the selected sync source. This is what the picker swaps
+/// into `#sync-form`, so it's also rendered directly on first page load. Owns the
+/// heading + blurb (from the registry) so every provider gets a consistent header.
+pub fn provider_form(
+    provider_key: &str,
+    subjects: &[Subject],
+    import_result: Option<(&str, &str)>,
+) -> Markup {
+    html! {
+        section class="mb-8" {
+            @if let Some(p) = sync::provider(provider_key) {
+                (c::section_heading(p.label))
+                p class="mb-4 text-sm text-muted" { (p.blurb) }
+            }
+            @match provider_key {
+                "dvr" => (dvr_form(subjects, import_result)),
+                _ => (c::alert_info("This sync source isn't supported yet.")),
+            }
+        }
+    }
+}
+
+/// CDPH Digital Vaccination Record import form (details + form; the heading and
+/// blurb are rendered by `provider_form`).
+fn dvr_form(subjects: &[Subject], import_result: Option<(&str, &str)>) -> Markup {
+    html! {
+        div class="mb-4 space-y-2 text-sm text-muted" {
+            p {
+                strong class="text-ink" { "Option A — paste the link(s) from the CDPH email" }
+                ", one per line. Links expire in 24 h — import before they do."
+            }
+            p {
+                strong class="text-ink" { "Option B — paste the page HTML" }
+                " if Option A fails: open the link in a browser, press "
+                code class="text-xs bg-slate-100 px-1 rounded" { "F12" }
+                " → Elements tab → right-click the "
+                code class="text-xs bg-slate-100 px-1 rounded" { "<html>" }
+                " node → Copy → Copy outerHTML, then paste below. One person at a time."
+            }
+            p {
+                "Re-importing the same record is safe — immunizations are matched on "
+                "vaccine, date and dose, so a repeat import updates in place instead of "
+                "creating duplicates."
+            }
+        }
+
+        @if let Some((status, message)) = import_result {
+            div class="mb-4" {
+                @if status == "ok" {
+                    (c::card(html! { p class="text-sm text-ink" { (message) } }))
+                } @else {
+                    (c::alert_danger(message))
+                }
+            }
+        }
+
+        (c::form("/settings/sync/vaccine-import", "post", html! {
+            (c::field_with_hint(
+                "Subject",
+                "Required when the CDPH page shows \"Dependent Minor 1\" instead of a real name. Leave blank to auto-detect from the name on the page.",
+                c::select_field("subject_id", false, || html! {
+                    (c::select_option("", "— auto-detect from page —", true))
+                    @for s in subjects {
+                        (c::select_option(s.id, html! { (s.given_name) " " (s.family_name) }, false))
+                    }
+                }),
+            ))
+            (c::field(
+                "CDPH link(s) or page HTML",
+                html! {
+                    textarea name="urls" rows="5"
+                        placeholder="https://myvaccinerecord.cdph.ca.gov/qr/en/DVR/…\nhttps://myvaccinerecord.cdph.ca.gov/qr/en/DVR/…"
+                        class="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm font-mono text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-brand/40" {}
+                },
+            ))
+            (c::button_primary("Import"))
+        }))
+    }
 }
 
 fn job_row(job: &SyncJob) -> Markup {

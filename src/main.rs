@@ -223,6 +223,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             post(handlers::settings::revoke_api_key),
         )
         .route("/settings/sync", get(handlers::sync::page))
+        .route("/settings/sync/form", get(handlers::sync::provider_form))
         .route(
             "/settings/sync/vaccine-import",
             post(handlers::sync::import_vaccines),

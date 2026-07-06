@@ -396,6 +396,22 @@ pub fn select_option(value: impl std::fmt::Display, label: impl Render, selected
     html! { option value=(v) selected[selected] { (label) } }
 }
 
+/// A `<select>` that htmx-GETs `hx_get` on change (sending its own value as a
+/// query param) and swaps the response into `hx_target`. Used by the sync page's
+/// "sync source" picker to swap in the selected provider's import form.
+pub fn hx_select(name: &str, hx_get: &str, hx_target: &str, options: Markup) -> Markup {
+    html! {
+        select
+            name=(name)
+            hx-get=(hx_get)
+            hx-trigger="change"
+            hx-target=(hx_target)
+            class=(FIELD_INPUT) {
+            (options)
+        }
+    }
+}
+
 pub fn textarea_field(name: &str, value: &str, rows: u32) -> Markup {
     html! {
         textarea

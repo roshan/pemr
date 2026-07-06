@@ -1,5 +1,5 @@
 use axum::Form;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect, Response};
 use maud::Markup;
 use serde::Deserialize;
@@ -26,7 +26,28 @@ pub async fn page(
         current_subject: viewer.default_subject_id,
         viewer: &viewer,
     };
-    Ok(views::page(&nav, &jobs, &subjects, None))
+    Ok(views::page(&nav, &jobs, &subjects, sync::DEFAULT_PROVIDER, None))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProviderQuery {
+    #[serde(default)]
+    pub provider: String,
+}
+
+/// Returns the import form for the picked sync source, swapped into `#sync-form`
+/// by the picker. Falls back to the default provider for an unknown key.
+pub async fn provider_form(
+    State(state): State<AppState>,
+    Query(query): Query<ProviderQuery>,
+) -> AppResult<Markup> {
+    let subjects = load_subjects(&state.pool).await?;
+    let key = if sync::provider(&query.provider).is_some() {
+        query.provider.as_str()
+    } else {
+        sync::DEFAULT_PROVIDER
+    };
+    Ok(views::provider_form(key, &subjects, None))
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,7 +95,13 @@ pub async fn import_vaccines(
         current_subject: viewer.default_subject_id,
         viewer: &viewer,
     };
-    Ok(views::page(&nav, &jobs, &subjects, Some((status, &message))))
+    Ok(views::page(
+        &nav,
+        &jobs,
+        &subjects,
+        sync::DEFAULT_PROVIDER,
+        Some((status, &message)),
+    ))
 }
 
 pub async fn run_task(
