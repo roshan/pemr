@@ -6,12 +6,17 @@
 //! Health Card JWS. This module fetches the page and parses the tables
 //! directly.
 //!
-//! Subject matching: the page header shows the patient's name. We match
-//! case-insensitively against subjects.full_name.
+//! Subject: the caller MUST specify who the record belongs to — we never
+//! auto-detect from the name on the page (CAIR labels minors as "Dependent
+//! Minor N", and guessing the subject is exactly the kind of mistake that must
+//! not happen). The page's printed name is surfaced back for a sanity check.
 //!
-//! Deduplication: external_id = `cair_{vaccine_slug}_{date}_{dose}`.
-//! Combination vaccines (DTaP-IPV/Hib) appear once per disease group but
-//! carry the same name+date+dose, so they naturally collapse to one row.
+//! Deduplication: external_id = `cair_{subject}_{vaccine_slug}_{date}`. The
+//! subject is in the key so two family members with the same vaccine on the same
+//! day never collide. The dose number is NOT in the key: a person can't get the
+//! same vaccine twice on one day, and combination vaccines (DTaP-IPV/Hib) are
+//! listed once per disease group with the dose number filled in one group and
+//! blank in another — keying on dose would store those as duplicates.
 
 use sqlx::PgPool;
 use time::Date;
@@ -22,7 +27,7 @@ use uuid::Uuid;
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Import from one or more CDPH inputs.
+/// Import from one or more CDPH inputs, all assigned to `subject_id`.
 ///
 /// Each entry in `inputs` can be either:
 /// - A `https://myvaccinerecord.cdph.ca.gov/...` URL — the server fetches it
@@ -31,25 +36,28 @@ use uuid::Uuid;
 /// URL fetching works when the CDPH page is server-side rendered (which it
 /// appears to be based on the rich HTML it returns). If the URL fetch doesn't
 /// return the vaccine data, paste the page HTML directly instead.
-/// `subject_override`: if provided, all imported vaccines are assigned to this
-/// subject regardless of the name on the page. Use this when CAIR labels the
-/// patient as "Dependent Minor 1" instead of their real name.
+///
+/// The subject is **always** the caller-supplied `subject_id` — we do NOT
+/// auto-detect from the name on the page (CAIR frequently labels minors as
+/// "Dependent Minor N", and imports must never guess whose record this is). The
+/// name CDPH printed on the page is surfaced in the result message so the caller
+/// can eyeball that they picked the right person.
 pub async fn import_from_urls(
     pool: &PgPool,
     inputs: Vec<String>,
-    subject_override: Option<Uuid>,
+    subject_id: Uuid,
 ) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (personal-emr vaccine sync)")
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
-    let subjects = sqlx::query_as::<_, (Uuid, String)>(
-        "select id, full_name from subjects order by family_name, given_name",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("DB error loading subjects: {e}"))?;
+    let subject_name = sqlx::query_scalar::<_, String>("select full_name from subjects where id = $1")
+        .bind(subject_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("DB error loading subject: {e}"))?
+        .ok_or("Selected subject no longer exists.")?;
 
     let source_id = ensure_cair_source(pool).await?;
 
@@ -61,9 +69,9 @@ pub async fn import_from_urls(
         if input.is_empty() {
             continue;
         }
-        match process_input(pool, &client, source_id, &subjects, input, subject_override).await {
-            Ok((name, count)) => {
-                messages.push(format!("{name}: {count} immunization(s)"));
+        match process_input(pool, &client, source_id, subject_id, input).await {
+            Ok((page_name, count)) => {
+                messages.push(format!("{count} immunization(s) (CDPH record for \"{page_name}\")"));
                 total += count;
             }
             Err(e) => messages.push(format!("Error: {e}")),
@@ -74,7 +82,7 @@ pub async fn import_from_urls(
         return Err("Nothing to import — paste a CDPH link or the page HTML.".into());
     }
 
-    let summary = format!("Imported {total} immunization(s). {}", messages.join("; "));
+    let summary = format!("{subject_name}: imported {total} immunization(s). {}", messages.join("; "));
     if messages.iter().any(|m| m.starts_with("Error")) {
         Err(summary)
     } else {
@@ -90,9 +98,8 @@ async fn process_input(
     pool: &PgPool,
     client: &reqwest::Client,
     source_id: Uuid,
-    subjects: &[(Uuid, String)],
+    subject_id: Uuid,
     input: &str,
-    subject_override: Option<Uuid>,
 ) -> Result<(String, u32), String> {
     let html = if input.starts_with("http://") || input.starts_with("https://") {
         fetch_html(client, input).await?
@@ -102,32 +109,42 @@ async fn process_input(
 
     let (page_name, immunizations) = parse_cdph_html(&html)?;
 
-    let (subject_id, display_name) = if let Some(id) = subject_override {
-        // Caller pinned a subject — look up their name for the result message.
-        let name = subjects
-            .iter()
-            .find(|(sid, _)| *sid == id)
-            .map(|(_, n)| n.clone())
-            .unwrap_or_else(|| id.to_string());
-        (id, name)
-    } else {
-        let id = match_subject(subjects, &page_name)?;
-        (id, page_name)
-    };
-
-    let mut count = 0u32;
-    // Deduplicate: same vaccine+date+dose appears once per disease group.
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for imm in &immunizations {
-        let ext_id = external_id(imm);
-        if seen.insert(ext_id.clone()) {
-            upsert_immunization(pool, source_id, subject_id, imm, &ext_id).await?;
-            count += 1;
-        }
+    let by_key = dedup_immunizations(subject_id, immunizations);
+    let count = by_key.len() as u32;
+    for (ext_id, imm) in &by_key {
+        upsert_immunization(pool, source_id, subject_id, imm, ext_id).await?;
     }
 
-    tracing::info!(subject = %display_name, count, "vaccine import completed");
-    Ok((display_name, count))
+    tracing::info!(subject = %subject_id, page_name = %page_name, count, "vaccine import completed");
+    Ok((page_name, count))
+}
+
+/// Collapse the parsed rows to one per physical shot, keyed by
+/// `external_id = (subject, vaccine, date)`. A person can't get the same vaccine
+/// twice on one day, so date+vaccine identifies the shot regardless of the dose
+/// number CDPH shows. Combination vaccines are listed once per disease group and
+/// the dose column is sometimes filled in one group and blank in another (e.g.
+/// DTaP-IPV/Hib shows "4" under DTP but blank under Polio) — keying on dose would
+/// store those as two rows. We drop dose from the key and keep whichever listing
+/// carries a real dose number.
+fn dedup_immunizations(
+    subject_id: Uuid,
+    immunizations: Vec<ParsedImmunization>,
+) -> std::collections::HashMap<String, ParsedImmunization> {
+    let mut by_key: std::collections::HashMap<String, ParsedImmunization> =
+        std::collections::HashMap::new();
+    for imm in immunizations {
+        let ext_id = external_id(subject_id, &imm);
+        match by_key.get(&ext_id) {
+            // Already have this shot with a dose number — keep it.
+            Some(existing) if existing.dose_number.is_some() => {}
+            // Otherwise take this one (fills in a dose the earlier copy lacked).
+            _ => {
+                by_key.insert(ext_id, imm);
+            }
+        }
+    }
+    by_key
 }
 
 // ---------------------------------------------------------------------------
@@ -155,10 +172,6 @@ async fn fetch_html(client: &reqwest::Client, url: &str) -> Result<String, Strin
 // ---------------------------------------------------------------------------
 // HTML parsing
 // ---------------------------------------------------------------------------
-
-struct PatientInfo {
-    full_name: String,
-}
 
 struct ParsedImmunization {
     vaccine: String,
@@ -311,47 +324,20 @@ fn parse_mmddyyyy(s: &str) -> Option<Date> {
 }
 
 // ---------------------------------------------------------------------------
-// Subject matching
-// ---------------------------------------------------------------------------
-
-fn match_subject(subjects: &[(Uuid, String)], name: &str) -> Result<Uuid, String> {
-    let needle = name.to_lowercase();
-
-    // Exact full_name match
-    for (id, full_name) in subjects {
-        if full_name.to_lowercase() == needle {
-            return Ok(*id);
-        }
-    }
-
-    // Substring match (handles trailing spaces, middle names, etc.)
-    for (id, full_name) in subjects {
-        let fn_lower = full_name.to_lowercase();
-        if fn_lower.contains(&needle) || needle.contains(&fn_lower) {
-            return Ok(*id);
-        }
-    }
-
-    let known: Vec<&str> = subjects.iter().map(|(_, n)| n.as_str()).collect();
-    Err(format!(
-        "No subject matched \"{name}\" — known subjects: {}. \
-         Check that the name in your subjects list matches what CAIR has on file.",
-        known.join(", ")
-    ))
-}
-
-// ---------------------------------------------------------------------------
 // Deduplication and DB
 // ---------------------------------------------------------------------------
 
-fn external_id(imm: &ParsedImmunization) -> String {
+/// Stable per-record dedup key: subject + vaccine + date. The subject is baked
+/// in so two family members with an identical vaccine on the same day never
+/// collide (the `(source_id, external_id)` unique index is global). The dose
+/// number is deliberately NOT in the key — see `process_input`.
+fn external_id(subject_id: Uuid, imm: &ParsedImmunization) -> String {
     let vax = slug(&imm.vaccine);
     let date = imm
         .occurred_at
         .map(|d| d.to_string())
         .unwrap_or_else(|| "unknown".into());
-    let dose = imm.dose_number.unwrap_or(0);
-    format!("cair_{vax}_{date}_{dose}")
+    format!("cair_{}_{vax}_{date}", subject_id.as_simple())
 }
 
 fn slug(s: &str) -> String {
@@ -405,7 +391,8 @@ async fn upsert_immunization(
          do update set
              vaccine          = excluded.vaccine,
              occurred_at      = excluded.occurred_at,
-             dose_number      = excluded.dose_number,
+             -- keep a real dose number rather than let a blank listing wipe it
+             dose_number      = coalesce(excluded.dose_number, immunizations.dose_number),
              status           = excluded.status,
              source_synced_at = now()",
     )
@@ -421,4 +408,83 @@ async fn upsert_immunization(
     .await
     .map_err(|e| format!("DB upsert error: {e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One `<tbody>` row: (vaccine, dose, date). Age/clinic columns are filler so
+    /// the row has the ≥5 cells `parse_row` requires.
+    fn row(vax: &str, dose: &str, date: &str) -> String {
+        format!(
+            "<tr><td>{vax}</td><td>{dose}</td><td>{date}</td><td>0y 1m</td><td>Clinic</td></tr>"
+        )
+    }
+
+    fn tbody(rows: &[String]) -> String {
+        format!("<table><tbody>{}</tbody></table>", rows.concat())
+    }
+
+    /// Reproduces the real CDPH bug: a combination vaccine (DTaP-IPV/Hib) is
+    /// listed under multiple disease groups, with the dose number filled in one
+    /// group ("4") and blank in another. It must collapse to ONE row that keeps
+    /// the dose number — regardless of which listing is parsed first.
+    #[test]
+    fn combination_vaccine_with_blank_dose_dedups_to_one() {
+        let subject = Uuid::now_v7();
+        let html = format!(
+            "<span>Name: </span>Astra Meridian </span>{}{}{}",
+            // DTP group: dose "4"
+            tbody(&[row("DTaP-IPV/Hib", "4", "07/01/2026")]),
+            // Polio group: same shot, blank dose
+            tbody(&[row("DTaP-IPV/Hib", "", "07/01/2026")]),
+            // an unrelated shot on the same day
+            tbody(&[row("Pneumococcal conjugate PCV15", "4", "07/01/2026")]),
+        );
+
+        let (_name, imms) = parse_cdph_html(&html).expect("parses");
+        assert_eq!(imms.len(), 3, "three raw rows parsed");
+
+        let deduped = dedup_immunizations(subject, imms);
+        assert_eq!(deduped.len(), 2, "DTaP-IPV/Hib collapses to one; PCV15 distinct");
+
+        let dtap: Vec<_> = deduped
+            .values()
+            .filter(|i| i.vaccine == "DTaP-IPV/Hib")
+            .collect();
+        assert_eq!(dtap.len(), 1, "exactly one DTaP-IPV/Hib row");
+        assert_eq!(dtap[0].dose_number, Some(4), "keeps the real dose, not the blank");
+    }
+
+    /// The blank-first ordering must still keep the real dose (order-independent).
+    #[test]
+    fn blank_dose_first_still_keeps_real_dose() {
+        let subject = Uuid::now_v7();
+        let html = format!(
+            "<span>Name: </span>X </span>{}{}",
+            tbody(&[row("DTaP-IPV/Hib", "", "07/01/2026")]),
+            tbody(&[row("DTaP-IPV/Hib", "4", "07/01/2026")]),
+        );
+        let (_n, imms) = parse_cdph_html(&html).expect("parses");
+        let deduped = dedup_immunizations(subject, imms);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped.values().next().unwrap().dose_number, Some(4));
+    }
+
+    /// external_id is subject-scoped: the same shot for two people is two keys.
+    #[test]
+    fn external_id_is_subject_scoped() {
+        let a = Uuid::now_v7();
+        let b = Uuid::now_v7();
+        let imm = ParsedImmunization {
+            vaccine: "MMR".into(),
+            dose_number: Some(1),
+            occurred_at: Date::from_calendar_date(2026, time::Month::April, 27).ok(),
+            status: "completed".into(),
+        };
+        assert_ne!(external_id(a, &imm), external_id(b, &imm));
+        // ...but stable for the same subject (idempotent re-import).
+        assert_eq!(external_id(a, &imm), external_id(a, &imm));
+    }
 }

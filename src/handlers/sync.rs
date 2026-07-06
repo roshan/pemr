@@ -63,8 +63,29 @@ pub async fn import_vaccines(
     Form(form): Form<VaccineImportForm>,
 ) -> AppResult<Markup> {
     let content = form.urls.trim().to_string();
-    let subject_override = empty_to_none(form.subject_id)
-        .and_then(|s| s.parse::<Uuid>().ok());
+
+    // Subject is required — we never auto-detect it from the CDPH page.
+    let subject_id = match empty_to_none(form.subject_id).and_then(|s| s.parse::<Uuid>().ok()) {
+        Some(id) => id,
+        None => {
+            let subjects = load_subjects(&state.pool).await?;
+            let jobs = sync::all_jobs(&state.pool).await?;
+            let nav = Nav {
+                title: "Sync",
+                current_path: "/settings/sync",
+                subjects: &subjects,
+                current_subject: viewer.default_subject_id,
+                viewer: &viewer,
+            };
+            return Ok(views::page(
+                &nav,
+                &jobs,
+                &subjects,
+                sync::DEFAULT_PROVIDER,
+                Some(("error", "Pick a subject before importing.")),
+            ));
+        }
+    };
 
     let inputs: Vec<String> = if content.starts_with('<') {
         vec![content]
@@ -78,7 +99,7 @@ pub async fn import_vaccines(
     };
 
     let result =
-        sync::vaccine::import_from_urls(&state.pool, inputs, subject_override).await;
+        sync::vaccine::import_from_urls(&state.pool, inputs, subject_id).await;
 
     let (status, message) = match &result {
         Ok(msg) => ("ok", msg.clone()),

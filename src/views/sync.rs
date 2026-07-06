@@ -97,8 +97,8 @@ fn dvr_form(subjects: &[Subject], import_result: Option<(&str, &str)>) -> Markup
                 " node → Copy → Copy outerHTML, then paste below. One person at a time."
             }
             p {
-                "Re-importing the same record is safe — immunizations are matched on "
-                "vaccine, date and dose, so a repeat import updates in place instead of "
+                "Re-importing the same record is safe — immunizations are matched per "
+                "subject on vaccine + date, so a repeat import updates in place instead of "
                 "creating duplicates."
             }
         }
@@ -116,9 +116,9 @@ fn dvr_form(subjects: &[Subject], import_result: Option<(&str, &str)>) -> Markup
         (c::form("/settings/sync/vaccine-import", "post", html! {
             (c::field_with_hint(
                 "Subject",
-                "Required when the CDPH page shows \"Dependent Minor 1\" instead of a real name. Leave blank to auto-detect from the name on the page.",
-                c::select_field("subject_id", false, || html! {
-                    (c::select_option("", "— auto-detect from page —", true))
+                "Required — pick whose record this is. CDPH labels minors as \"Dependent Minor N\", so imports never guess the subject.",
+                c::select_field("subject_id", true, || html! {
+                    option value="" disabled selected { "— select a subject —" }
                     @for s in subjects {
                         (c::select_option(s.id, html! { (s.given_name) " " (s.family_name) }, false))
                     }
