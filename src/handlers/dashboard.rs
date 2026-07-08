@@ -71,16 +71,16 @@ async fn clinical_snapshot(
         .bind(id)
         .fetch_one(pool)
         .await?;
-    let cs = crate::handlers::subjects::clinical_summary_for(pool, &s).await?;
+    let n = crate::subject_modules::snapshot_counts(pool, &s).await?;
     let snap = ClinicalSnapshot {
         subject_id: id,
-        problems: cs.conditions.len(),
-        medications: cs.medications.len(),
-        allergies: cs.allergies.len(),
-        immunizations: cs.immunizations.len(),
-        vitals: cs.vitals.len(),
-        appointments: cs.upcoming_appts.len(),
-        vaccines_due: cs.vaccines_due,
+        problems: n.problems,
+        medications: n.medications,
+        allergies: n.allergies,
+        immunizations: n.immunizations,
+        vitals: n.vitals,
+        appointments: n.appointments,
+        vaccines_due: n.vaccines_due,
     };
     let has_any = snap.problems
         + snap.medications

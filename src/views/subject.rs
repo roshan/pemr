@@ -1,9 +1,6 @@
 use maud::{Markup, html};
 
-use crate::models::{
-    Allergy, Appointment, CareTeamMember, Condition, Immunization, InsuranceCoverageRow, Medication,
-    Subject, VitalRow,
-};
+use crate::models::Subject;
 use crate::views::components as c;
 use crate::views::dashboard::{self, DashboardData};
 use crate::views::layout::{Nav, shell};
@@ -94,21 +91,6 @@ pub fn dashboard_page(
     shell(nav, body)
 }
 
-/// Clinical data surfaced on the subject chart. Owned Vecs, built by the handler.
-pub struct ClinicalSummary {
-    pub subject_id: uuid::Uuid,
-    pub no_known_allergies: bool,
-    pub allergies: Vec<Allergy>,
-    pub medications: Vec<Medication>,
-    pub conditions: Vec<Condition>,
-    pub immunizations: Vec<Immunization>,
-    pub vitals: Vec<VitalRow>,
-    pub upcoming_appts: Vec<Appointment>,
-    pub care_team: Vec<CareTeamMember>,
-    pub insurance: Vec<InsuranceCoverageRow>,
-    /// Vaccines due or overdue (from the forecast), for the panel badge.
-    pub vaccines_due: usize,
-}
 
 fn bio_header(subject: &Subject) -> Markup {
     let bio_parts: Vec<Markup> = [

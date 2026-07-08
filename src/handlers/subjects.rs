@@ -6,10 +6,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::handlers::{AppState, load_subjects};
-use crate::models::{
-    Allergy, Appointment, CareTeamMember, Condition, Immunization, Incident, InsuranceCoverageRow,
-    Medication, Record, Subject, VitalRow, empty_to_none, parse_date,
-};
+use crate::models::{Immunization, Incident, Record, Subject, empty_to_none, parse_date};
 use crate::viewer::ViewerContext;
 use crate::views::layout::Nav;
 use crate::views::subject;
@@ -148,7 +145,8 @@ pub async fn detail(
     .fetch_all(&state.pool)
     .await?;
 
-    let cards = crate::subject_modules::render_all(&state.pool, &s).await?;
+    let cards =
+        crate::subject_modules::render_all(&state.pool, &s, crate::subject_modules::Mode::Card).await?;
     let timeline = crate::handlers::dashboard::load_timeline(&state.pool, Some(id), "1y", None, None).await?;
 
     let nav = Nav {
@@ -170,95 +168,6 @@ pub async fn detail(
     Ok(subject::dashboard_page(&nav, &s, &cards, &data, &timeline))
 }
 
-/// Loads the clinical summary (Phase 1/2 tables) shared by the subject chart,
-/// the printable summary, and the home-dashboard clinical snapshot.
-pub(crate) async fn clinical_summary_for(
-    pool: &sqlx::PgPool,
-    s: &Subject,
-) -> Result<subject::ClinicalSummary, sqlx::Error> {
-    let allergies = sqlx::query_as::<_, Allergy>(
-        "select * from allergies where subject_id = $1 and status <> 'entered_in_error'
-          order by created_at desc",
-    )
-    .bind(s.id)
-    .fetch_all(pool)
-    .await?;
-    let medications = sqlx::query_as::<_, Medication>(
-        "select * from medications where subject_id = $1 and status = 'active'
-          order by created_at desc",
-    )
-    .bind(s.id)
-    .fetch_all(pool)
-    .await?;
-    let conditions = sqlx::query_as::<_, Condition>(
-        "select * from conditions where subject_id = $1 and status = 'active'
-          order by onset_date desc nulls last, created_at desc",
-    )
-    .bind(s.id)
-    .fetch_all(pool)
-    .await?;
-    let immunizations = sqlx::query_as::<_, Immunization>(
-        "select * from immunizations where subject_id = $1
-          order by occurred_at desc nulls last, created_at desc",
-    )
-    .bind(s.id)
-    .fetch_all(pool)
-    .await?;
-    let vaccines_due = match s.dob {
-        Some(dob) => crate::peds::forecast(dob, &immunizations, crate::peds::today())
-            .iter()
-            .filter(|d| d.status != "upcoming")
-            .count(),
-        None => 0,
-    };
-    let vitals = sqlx::query_as::<_, VitalRow>(
-        "select display, value_num::float8 as value_num, value_text, unit, effective_on, abnormal_flag
-           from observations where subject_id = $1
-          order by effective_on desc, created_at desc limit 8",
-    )
-    .bind(s.id)
-    .fetch_all(pool)
-    .await?;
-    let upcoming_appts = sqlx::query_as::<_, Appointment>(
-        "select * from appointments where subject_id = $1 and starts_at >= now()
-          order by starts_at asc limit 6",
-    )
-    .bind(s.id)
-    .fetch_all(pool)
-    .await?;
-    let care_team = sqlx::query_as::<_, CareTeamMember>(
-        "select sp.role, p.full_name, p.specialty
-           from subject_providers sp join providers p on p.id = sp.provider_id
-          where sp.subject_id = $1 and sp.active
-          order by p.full_name",
-    )
-    .bind(s.id)
-    .fetch_all(pool)
-    .await?;
-    let insurance = sqlx::query_as::<_, InsuranceCoverageRow>(
-        "select p.payer_name, p.plan_name, p.plan_kind,
-                si.relationship, coalesce(si.member_id, p.member_id) as member_id
-           from subject_insurance si join insurance_plans p on p.id = si.plan_id
-          where si.subject_id = $1
-          order by si.is_primary desc, p.payer_name",
-    )
-    .bind(s.id)
-    .fetch_all(pool)
-    .await?;
-    Ok(subject::ClinicalSummary {
-        subject_id: s.id,
-        no_known_allergies: s.no_known_allergies,
-        allergies,
-        medications,
-        conditions,
-        immunizations,
-        vitals,
-        upcoming_appts,
-        care_team,
-        insurance,
-        vaccines_due,
-    })
-}
 
 /// `/subjects/{id}/summary` — print-friendly one-page health summary (PEMR-27).
 pub async fn summary(
@@ -271,7 +180,8 @@ pub async fn summary(
         .bind(id)
         .fetch_one(&state.pool)
         .await?;
-    let cs = clinical_summary_for(&state.pool, &s).await?;
+    let sections =
+        crate::subject_modules::render_all(&state.pool, &s, crate::subject_modules::Mode::Print).await?;
     let nav = Nav {
         title: &s.full_name,
         current_path: "/subjects",
@@ -279,7 +189,7 @@ pub async fn summary(
         current_subject: Some(id),
         viewer: &viewer,
     };
-    Ok(crate::views::summary::page(&nav, &s, &cs))
+    Ok(crate::views::summary::page(&nav, &s, &sections))
 }
 
 /// `/subjects/{id}/immunizations` — immunization record + forecast (PEMR-25).

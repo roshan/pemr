@@ -1,13 +1,14 @@
-//! Subject-page modules. Each is a **self-contained card**: it fetches its own
-//! data and renders itself, or returns `None` to opt out (not applicable to this
-//! subject). The subject chart just iterates [`MODULES`] — it has *no* per-feature
-//! knowledge, so adding a subfeature is one fn here plus one line in the registry.
-//! Mirrors the `sync::TaskDef` function-pointer registry already used in the app.
+//! Subject-page modules. Each is a **self-contained feature**: it fetches its own
+//! data once and renders itself for the requested [`Mode`] (the on-screen card, or
+//! the printable summary section), or returns `None` to opt out. Callers just
+//! iterate [`MODULES`] — they have *no* per-feature knowledge, so adding a
+//! subfeature is one fn here plus one line in the registry. Mirrors the
+//! `sync::TaskDef` function-pointer registry.
 
 use std::future::Future;
 use std::pin::Pin;
 
-use maud::{Markup, html};
+use maud::{Markup, Render, html};
 use sqlx::PgPool;
 
 use crate::models::{
@@ -16,42 +17,66 @@ use crate::models::{
 };
 use crate::views::components as c;
 
+/// Which surface a module is rendering for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// The subject chart — a bordered summary card (truncated, with "View all").
+    Card,
+    /// The printable one-pager — a flat section with the full list, no links.
+    Print,
+}
+
 type BoxFut<'a> = Pin<Box<dyn Future<Output = Result<Option<Markup>, sqlx::Error>> + Send + 'a>>;
 
-/// A subject-page module: `(pool, subject) -> optional card`.
-pub type Module = for<'a> fn(&'a PgPool, &'a Subject) -> BoxFut<'a>;
+/// A subject-page module: `(pool, subject, mode) -> optional rendered block`.
+pub type Module = for<'a> fn(&'a PgPool, &'a Subject, Mode) -> BoxFut<'a>;
 
-/// Ordered registry = the render order on the chart. Add a subfeature = add a line.
+/// Ordered registry — the render order on both the chart and the printout. Add a
+/// subfeature = add a line (and a fn below).
 pub const MODULES: &[Module] = &[
     problems,
-    medications,
     allergies,
+    medications,
+    immunizations,
     vitals,
     growth,
-    immunizations,
     appointments,
     care_team,
     insurance,
 ];
 
-/// Render every applicable module's card, in registry order.
-pub async fn render_all(pool: &PgPool, s: &Subject) -> Result<Vec<Markup>, sqlx::Error> {
-    let mut cards = Vec::new();
+/// Render every applicable module's block for `mode`, in registry order.
+pub async fn render_all(pool: &PgPool, s: &Subject, mode: Mode) -> Result<Vec<Markup>, sqlx::Error> {
+    let mut out = Vec::new();
     for m in MODULES {
-        if let Some(card) = m(pool, s).await? {
-            cards.push(card);
+        if let Some(block) = m(pool, s, mode).await? {
+            out.push(block);
         }
     }
-    Ok(cards)
+    Ok(out)
 }
 
-// ── shared render helpers (were private in views::subject) ──────────────────
+// ── shared render helpers ────────────────────────────────────────────────────
 const CARD_MAX: usize = 4;
 
 fn fmt_num(n: f64) -> String {
-    if n.fract() == 0.0 { format!("{}", n as i64) } else { format!("{n}") }
+    if n.fract() == 0.0 { format!("{}", n as i64) } else { format!("{n:.1}") }
 }
 
+/// Card wrapper: bordered panel, optionally with a "View all →" link.
+fn card<T: Render>(title: T, href: Option<String>, body: Markup) -> Markup {
+    match href {
+        Some(h) => c::summary_panel_linked(title, h, body),
+        None => c::summary_panel(title, body),
+    }
+}
+
+/// Print wrapper: a flat, page-break-friendly section.
+fn print_section(title: &str, body: Markup) -> Markup {
+    html! { section class="mb-4" { (c::section_heading(title)) (body) } }
+}
+
+/// Card body: the first `CARD_MAX` items + an "and N more" affordance.
 fn truncated_list(
     items: impl Iterator<Item = Markup>,
     total: usize,
@@ -73,9 +98,14 @@ fn truncated_list(
     }
 }
 
+/// Print body: the full list.
+fn full_list(items: impl Iterator<Item = Markup>) -> Markup {
+    html! { (c::panel_list(html! { @for item in items { (item) } })) }
+}
+
 // ── modules ─────────────────────────────────────────────────────────────────
 
-fn problems<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
+fn problems<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
     Box::pin(async move {
         let rows = sqlx::query_as::<_, Condition>(
             "select * from conditions where subject_id = $1 and status = 'active'
@@ -84,41 +114,26 @@ fn problems<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
         .bind(s.id)
         .fetch_all(pool)
         .await?;
-        Ok(Some(c::summary_panel("Problems", if rows.is_empty() {
-            c::empty_state("No active problems")
-        } else {
-            truncated_list(rows.iter().map(|x| c::panel_list_item(
-                html! { (x.name) },
-                html! { @if let Some(d) = x.onset_date { "since " (d) } },
-            )), rows.len(), None)
-        })))
+        let item = |x: &Condition| c::panel_list_item(
+            html! { (x.name) },
+            html! { @if let Some(d) = x.onset_date { "since " (d) } },
+        );
+        Ok(Some(match mode {
+            Mode::Card => card("Problems", None, if rows.is_empty() {
+                c::empty_state("No active problems")
+            } else {
+                truncated_list(rows.iter().map(item), rows.len(), None)
+            }),
+            Mode::Print => print_section("Active problems", if rows.is_empty() {
+                c::empty_state("None recorded")
+            } else {
+                full_list(rows.iter().map(item))
+            }),
+        }))
     })
 }
 
-fn medications<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
-    Box::pin(async move {
-        let rows = sqlx::query_as::<_, Medication>(
-            "select * from medications where subject_id = $1 and status = 'active'
-              order by created_at desc",
-        )
-        .bind(s.id)
-        .fetch_all(pool)
-        .await?;
-        Ok(Some(c::summary_panel("Medications", if rows.is_empty() {
-            c::empty_state("No active medications")
-        } else {
-            truncated_list(rows.iter().map(|m| c::panel_list_item(
-                html! { (m.name) },
-                html! {
-                    @if let Some(dose) = &m.dose { (dose) }
-                    @if let Some(freq) = &m.frequency { " · " (freq) }
-                },
-            )), rows.len(), None)
-        })))
-    })
-}
-
-fn allergies<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
+fn allergies<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
     Box::pin(async move {
         let rows = sqlx::query_as::<_, Allergy>(
             "select * from allergies where subject_id = $1 and status <> 'entered_in_error'
@@ -127,25 +142,113 @@ fn allergies<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
         .bind(s.id)
         .fetch_all(pool)
         .await?;
-        Ok(Some(c::summary_panel("Allergies", if rows.is_empty() {
-            if s.no_known_allergies {
-                c::empty_state("No known allergies (asserted)")
-            } else {
-                c::empty_state("No allergies recorded")
-            }
+        let empty = if s.no_known_allergies {
+            "No known allergies (asserted)"
+        } else if mode == Mode::Print {
+            "None recorded"
         } else {
-            truncated_list(rows.iter().map(|a| c::panel_list_item(
-                html! { (a.substance) },
-                html! {
-                    @if let Some(crit) = &a.criticality { (crit) }
-                    @else if let Some(sev) = &a.severity { (sev) }
-                },
-            )), rows.len(), None)
-        })))
+            "No allergies recorded"
+        };
+        // Print includes the reaction detail; the card keeps it terse.
+        let item = |a: &Allergy, with_reaction: bool| c::panel_list_item(
+            html! { (a.substance) },
+            html! {
+                @if let Some(crit) = &a.criticality { (crit) }
+                @else if let Some(sev) = &a.severity { (sev) }
+                @if with_reaction { @if let Some(r) = &a.reaction { " — " (r) } }
+            },
+        );
+        Ok(Some(match mode {
+            Mode::Card => card("Allergies", None, if rows.is_empty() {
+                c::empty_state(empty)
+            } else {
+                truncated_list(rows.iter().map(|a| item(a, false)), rows.len(), None)
+            }),
+            Mode::Print => print_section("Allergies", if rows.is_empty() {
+                c::empty_state(empty)
+            } else {
+                full_list(rows.iter().map(|a| item(a, true)))
+            }),
+        }))
     })
 }
 
-fn vitals<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
+fn medications<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
+    Box::pin(async move {
+        let rows = sqlx::query_as::<_, Medication>(
+            "select * from medications where subject_id = $1 and status = 'active'
+              order by created_at desc",
+        )
+        .bind(s.id)
+        .fetch_all(pool)
+        .await?;
+        let item = |m: &Medication| c::panel_list_item(
+            html! { (m.name) },
+            html! {
+                @if let Some(dose) = &m.dose { (dose) }
+                @if let Some(freq) = &m.frequency { " · " (freq) }
+            },
+        );
+        Ok(Some(match mode {
+            Mode::Card => card("Medications", None, if rows.is_empty() {
+                c::empty_state("No active medications")
+            } else {
+                truncated_list(rows.iter().map(item), rows.len(), None)
+            }),
+            Mode::Print => print_section("Medications", if rows.is_empty() {
+                c::empty_state("None recorded")
+            } else {
+                full_list(rows.iter().map(item))
+            }),
+        }))
+    })
+}
+
+fn immunizations<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
+    Box::pin(async move {
+        let rows = sqlx::query_as::<_, Immunization>(
+            "select * from immunizations where subject_id = $1
+              order by occurred_at desc nulls last, created_at desc",
+        )
+        .bind(s.id)
+        .fetch_all(pool)
+        .await?;
+        Ok(Some(match mode {
+            Mode::Card => {
+                let due = match s.dob {
+                    Some(dob) => crate::peds::forecast(dob, &rows, crate::peds::today())
+                        .iter()
+                        .filter(|d| d.status != "upcoming")
+                        .count(),
+                    None => 0,
+                };
+                let href = format!("/subjects/{}/immunizations", s.id);
+                card(
+                    html! { "Immunizations" @if due > 0 { " " (c::badge_warn(format!("{due} due"))) } },
+                    Some(href.clone()),
+                    if rows.is_empty() {
+                        c::empty_state("No immunizations recorded")
+                    } else {
+                        truncated_list(rows.iter().map(|im| c::panel_list_item(
+                            html! { (im.vaccine) },
+                            html! { @if let Some(d) = im.occurred_at { (d) } },
+                        )), rows.len(), Some(href))
+                    },
+                )
+            }
+            Mode::Print => print_section("Immunizations", if rows.is_empty() {
+                c::empty_state("None recorded")
+            } else {
+                full_list(rows.iter().map(|im| c::panel_list_item(
+                    html! { (im.vaccine) @if let Some(n) = im.dose_number { " " (c::muted(format!("dose {n}"))) } },
+                    html! { @if let Some(d) = im.occurred_at { (d) } @else { "date unknown" } },
+                )))
+            }),
+        }))
+    })
+}
+
+fn vitals<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
     Box::pin(async move {
         let rows = sqlx::query_as::<_, VitalRow>(
             "select display, value_num::float8 as value_num, value_text, unit, effective_on, abnormal_flag
@@ -155,32 +258,41 @@ fn vitals<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
         .bind(s.id)
         .fetch_all(pool)
         .await?;
-        Ok(Some(c::summary_panel("Recent vitals & labs", if rows.is_empty() {
-            c::empty_state("No vitals or labs recorded")
-        } else {
-            truncated_list(rows.iter().map(|v| {
-                let val = v.value_num.map(fmt_num)
-                    .or_else(|| v.value_text.clone())
-                    .unwrap_or_else(|| "—".into());
-                c::panel_list_item(
+        let val = |v: &VitalRow| v.value_num.map(fmt_num)
+            .or_else(|| v.value_text.clone())
+            .unwrap_or_else(|| "—".into());
+        Ok(Some(match mode {
+            Mode::Card => card("Recent vitals & labs", None, if rows.is_empty() {
+                c::empty_state("No vitals or labs recorded")
+            } else {
+                truncated_list(rows.iter().map(|v| c::panel_list_item(
                     html! {
                         (v.display)
-                        @if let Some(f) = &v.abnormal_flag {
-                            @if f != "normal" { " " (c::badge_warn(f)) }
-                        }
+                        @if let Some(f) = &v.abnormal_flag { @if f != "normal" { " " (c::badge_warn(f)) } }
                     },
-                    html! { (val) @if let Some(u) = &v.unit { " " (u) } " · " (v.effective_on) },
-                )
-            }), rows.len(), None)
-        })))
+                    html! { (val(v)) @if let Some(u) = &v.unit { " " (u) } " · " (v.effective_on) },
+                )), rows.len(), None)
+            }),
+            Mode::Print => print_section("Recent vitals & growth", if rows.is_empty() {
+                c::empty_state("None recorded")
+            } else {
+                full_list(rows.iter().map(|v| c::panel_list_item(
+                    html! { (v.display) },
+                    html! { (val(v)) @if let Some(u) = &v.unit { " " (u) } " · " (v.effective_on) },
+                )))
+            }),
+        }))
     })
 }
 
-fn growth<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
+fn growth<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
     Box::pin(async move {
+        // Chart is a card-only affordance; the printout folds growth into the
+        // "Recent vitals & growth" list above.
+        if mode == Mode::Print {
+            return Ok(None);
+        }
         let series = crate::handlers::subjects::growth_series(pool, s).await?;
-        // Opt out when there's nothing to plot — growth only applies to subjects
-        // with measurements (typically infants/children).
         if series.iter().all(|g| g.points.is_empty()) {
             return Ok(None);
         }
@@ -188,39 +300,7 @@ fn growth<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
     })
 }
 
-fn immunizations<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
-    Box::pin(async move {
-        let rows = sqlx::query_as::<_, Immunization>(
-            "select * from immunizations where subject_id = $1
-              order by occurred_at desc nulls last, created_at desc",
-        )
-        .bind(s.id)
-        .fetch_all(pool)
-        .await?;
-        let due = match s.dob {
-            Some(dob) => crate::peds::forecast(dob, &rows, crate::peds::today())
-                .iter()
-                .filter(|d| d.status != "upcoming")
-                .count(),
-            None => 0,
-        };
-        let href = format!("/subjects/{}/immunizations", s.id);
-        Ok(Some(c::summary_panel_linked(
-            html! { "Immunizations" @if due > 0 { " " (c::badge_warn(format!("{due} due"))) } },
-            href.clone(),
-            if rows.is_empty() {
-                c::empty_state("No immunizations recorded")
-            } else {
-                truncated_list(rows.iter().map(|im| c::panel_list_item(
-                    html! { (im.vaccine) },
-                    html! { @if let Some(d) = im.occurred_at { (d) } },
-                )), rows.len(), Some(href))
-            },
-        )))
-    })
-}
-
-fn appointments<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
+fn appointments<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
     Box::pin(async move {
         let rows = sqlx::query_as::<_, Appointment>(
             "select * from appointments where subject_id = $1 and starts_at >= now()
@@ -229,21 +309,29 @@ fn appointments<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
         .bind(s.id)
         .fetch_all(pool)
         .await?;
-        let href = format!("/subjects/{}/appointments", s.id);
-        Ok(Some(c::summary_panel_linked("Upcoming appointments", href.clone(),
-            if rows.is_empty() {
+        let item = |ap: &Appointment| c::panel_list_item(
+            html! { (ap.title) },
+            html! { (ap.starts_at.date()) },
+        );
+        Ok(Some(match mode {
+            Mode::Card => {
+                let href = format!("/subjects/{}/appointments", s.id);
+                card("Upcoming appointments", Some(href.clone()), if rows.is_empty() {
+                    c::empty_state("None scheduled")
+                } else {
+                    truncated_list(rows.iter().map(item), rows.len(), Some(href))
+                })
+            }
+            Mode::Print => print_section("Upcoming appointments", if rows.is_empty() {
                 c::empty_state("None scheduled")
             } else {
-                truncated_list(rows.iter().map(|ap| c::panel_list_item(
-                    html! { (ap.title) },
-                    html! { (ap.starts_at.date()) },
-                )), rows.len(), Some(href))
-            },
-        )))
+                full_list(rows.iter().map(item))
+            }),
+        }))
     })
 }
 
-fn care_team<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
+fn care_team<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
     Box::pin(async move {
         let rows = sqlx::query_as::<_, CareTeamMember>(
             "select sp.role, p.full_name, p.specialty
@@ -254,22 +342,34 @@ fn care_team<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
         .bind(s.id)
         .fetch_all(pool)
         .await?;
-        let href = format!("/subjects/{}/care-team", s.id);
-        Ok(Some(c::summary_panel_linked("Care team", href.clone(),
-            if rows.is_empty() {
-                c::empty_state("No care team recorded")
+        let item = |m: &CareTeamMember| c::panel_list_item(
+            html! { (m.full_name) @if let Some(sp) = &m.specialty { " " (c::muted(sp)) } },
+            html! { (m.role) },
+        );
+        Ok(Some(match mode {
+            Mode::Card => {
+                let href = format!("/subjects/{}/care-team", s.id);
+                card("Care team", Some(href.clone()), if rows.is_empty() {
+                    c::empty_state("No care team recorded")
+                } else {
+                    truncated_list(rows.iter().map(item), rows.len(), Some(href))
+                })
+            }
+            Mode::Print => print_section("Care team", if rows.is_empty() {
+                c::empty_state("None recorded")
             } else {
-                truncated_list(rows.iter().map(|m| c::panel_list_item(
-                    html! { (m.full_name) @if let Some(sp) = &m.specialty { " " (c::muted(sp)) } },
-                    html! { (m.role) },
-                )), rows.len(), Some(href))
-            },
-        )))
+                full_list(rows.iter().map(item))
+            }),
+        }))
     })
 }
 
-fn insurance<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
+fn insurance<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
     Box::pin(async move {
+        // Insurance is on the chart, not the printable clinical handout.
+        if mode == Mode::Print {
+            return Ok(None);
+        }
         let rows = sqlx::query_as::<_, InsuranceCoverageRow>(
             "select p.payer_name, p.plan_name, p.plan_kind,
                     si.relationship, coalesce(si.member_id, p.member_id) as member_id
@@ -280,18 +380,57 @@ fn insurance<'a>(pool: &'a PgPool, s: &'a Subject) -> BoxFut<'a> {
         .bind(s.id)
         .fetch_all(pool)
         .await?;
-        Ok(Some(c::summary_panel_linked("Insurance", "/insurance",
-            if rows.is_empty() {
-                c::empty_state("No insurance recorded")
-            } else {
-                truncated_list(rows.iter().map(|ins| c::panel_list_item(
-                    html! { (ins.payer_name) @if let Some(pn) = &ins.plan_name { " " (c::muted(pn)) } },
-                    html! {
-                        @if let Some(m) = &ins.member_id { (m) " · " }
-                        (ins.plan_kind) " · " (ins.relationship)
-                    },
-                )), rows.len(), Some("/insurance".to_string()))
-            },
-        )))
+        Ok(Some(card("Insurance", Some("/insurance".to_string()), if rows.is_empty() {
+            c::empty_state("No insurance recorded")
+        } else {
+            truncated_list(rows.iter().map(|ins| c::panel_list_item(
+                html! { (ins.payer_name) @if let Some(pn) = &ins.plan_name { " " (c::muted(pn)) } },
+                html! {
+                    @if let Some(m) = &ins.member_id { (m) " · " }
+                    (ins.plan_kind) " · " (ins.relationship)
+                },
+            )), rows.len(), Some("/insurance".to_string()))
+        })))
+    })
+}
+
+/// Compact counts for the home-dashboard snapshot (no full row loads). Kept here
+/// so the counts track the modules' own filters (active problems/meds, etc.).
+pub struct SnapshotCounts {
+    pub problems: usize,
+    pub medications: usize,
+    pub allergies: usize,
+    pub immunizations: usize,
+    pub vitals: usize,
+    pub appointments: usize,
+    pub vaccines_due: usize,
+}
+
+pub async fn snapshot_counts(pool: &PgPool, s: &Subject) -> Result<SnapshotCounts, sqlx::Error> {
+    async fn n(pool: &PgPool, sql: &str, id: uuid::Uuid) -> Result<usize, sqlx::Error> {
+        let c: i64 = sqlx::query_scalar(sql).bind(id).fetch_one(pool).await?;
+        Ok(c as usize)
+    }
+    let imms = sqlx::query_as::<_, Immunization>(
+        "select * from immunizations where subject_id = $1",
+    )
+    .bind(s.id)
+    .fetch_all(pool)
+    .await?;
+    let vaccines_due = match s.dob {
+        Some(dob) => crate::peds::forecast(dob, &imms, crate::peds::today())
+            .iter()
+            .filter(|d| d.status != "upcoming")
+            .count(),
+        None => 0,
+    };
+    Ok(SnapshotCounts {
+        problems: n(pool, "select count(*) from conditions where subject_id=$1 and status='active'", s.id).await?,
+        medications: n(pool, "select count(*) from medications where subject_id=$1 and status='active'", s.id).await?,
+        allergies: n(pool, "select count(*) from allergies where subject_id=$1 and status<>'entered_in_error'", s.id).await?,
+        immunizations: imms.len(),
+        vitals: n(pool, "select count(*) from observations where subject_id=$1", s.id).await?,
+        appointments: n(pool, "select count(*) from appointments where subject_id=$1 and starts_at>=now()", s.id).await?,
+        vaccines_due,
     })
 }
