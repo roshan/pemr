@@ -240,6 +240,12 @@ When a view needs a new visual idiom (a new badge color, a new button variant, a
 
 **Gotcha — regenerate + commit CSS before you deploy.** The image is built by **skybuild** on tb-0-0 from **committed HEAD** (not your working tree — see "Builds (skybuild)" below), so a class you added but didn't compile won't be in the shipped `static/vendor/app.css`. `mise run deploy` guards this for you: it depends on `css` (regenerates the bundle) and then **refuses to build if the tree is dirty**, telling you to commit. So the workflow is `mise run css` → commit → `mise run deploy`. The failure this prevents is stale CSS: missing styles (huge unstyled `<time>` elements, invisible dots, ungrid-ed cards). The local `mise run build` (raw `docker build` of the working tree) is for local container testing only — it is **not** what deploys.
 
+## Subject-page modules (how to add a subfeature)
+
+The subject chart's "Clinical summary" is an **ordered registry of self-contained modules**, not a god-struct — `src/subject_modules.rs`. Each module is a `fn(&PgPool, &Subject) -> Pin<Box<dyn Future<Output = Result<Option<Markup>, sqlx::Error>>>>` that **owns its own query + render** and returns `None` to opt out (e.g. `growth` opts out when the subject has no measurements). The page just iterates `MODULES` and lays out whatever cards come back — it has **zero per-feature knowledge**. This mirrors the `sync::TaskDef`/`TaskFn` fn-pointer registry.
+
+**To add a per-subject subfeature: write one module fn in `subject_modules.rs` and add one line to `MODULES`.** Do NOT thread a new field through `ClinicalSummary` or add an `@if` to the view — that's the anti-pattern this replaced. Registry order = render order. (`ClinicalSummary`/`clinical_summary_for` still exist, but only feed the separate print summary at `/subjects/{id}/summary`.)
+
 ## Deployment shape (kant)
 
 - Subdomain: `emr.roshangeorge.dev`
