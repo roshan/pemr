@@ -4,39 +4,6 @@ use time::OffsetDateTime;
 use crate::models::Subject;
 use crate::sync::{self, SyncJob};
 use crate::views::components as c;
-use crate::views::layout::{Nav, shell};
-
-pub fn page(
-    nav: &Nav<'_>,
-    jobs: &[SyncJob],
-    subjects: &[Subject],
-    provider_key: &str,
-    import_result: Option<(&str, &str)>,
-) -> Markup {
-    let body = html! {
-        (c::page_title("Sync"))
-
-        section class="mb-6 max-w-xl" {
-            (c::field_with_hint(
-                "Sync source",
-                "Choose which portal to import from. More sources will appear here as we add them.",
-                c::hx_select("provider", "/settings/sync/form", "#sync-form", html! {
-                    @for p in sync::SYNC_PROVIDERS {
-                        (c::select_option(p.key, p.label, p.key == provider_key))
-                    }
-                }),
-            ))
-        }
-
-        // Swapped in place by the picker; the picker itself lives outside so it persists.
-        div id="sync-form" {
-            (provider_form(provider_key, subjects, import_result))
-        }
-
-        (history_table(jobs))
-    };
-    shell(nav, body)
-}
 
 /// The sync-run history table (import runs recorded in `sync_jobs`). Shared by
 /// the unified import page.

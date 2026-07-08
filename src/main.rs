@@ -15,6 +15,7 @@ mod import_cli;
 mod importer;
 mod models;
 mod peds;
+mod subject_modules;
 mod sync;
 mod viewer;
 mod views;

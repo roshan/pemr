@@ -148,7 +148,7 @@ pub async fn detail(
     .fetch_all(&state.pool)
     .await?;
 
-    let summary = clinical_summary_for(&state.pool, &s).await?;
+    let cards = crate::subject_modules::render_all(&state.pool, &s).await?;
     let timeline = crate::handlers::dashboard::load_timeline(&state.pool, Some(id), "1y", None, None).await?;
 
     let nav = Nav {
@@ -167,7 +167,7 @@ pub async fn detail(
         // The chart renders the full clinical summary below; no snapshot needed.
         clinical: None,
     };
-    Ok(subject::dashboard_page(&nav, &s, &summary, &data, &timeline))
+    Ok(subject::dashboard_page(&nav, &s, &cards, &data, &timeline))
 }
 
 /// Loads the clinical summary (Phase 1/2 tables) shared by the subject chart,
@@ -329,19 +329,14 @@ pub async fn immunizations(
     ))
 }
 
-/// `/subjects/{id}/growth` — growth trend charts (PEMR-24).
-pub async fn growth(
-    State(state): State<AppState>,
-    viewer: ViewerContext,
-    Path(id): Path<Uuid>,
-) -> AppResult<Markup> {
+/// Build weight/length/head-circ growth series for a subject (empty if no DOB).
+/// Shared by the full growth page and the subject-chart mini card.
+pub(crate) async fn growth_series(
+    pool: &sqlx::PgPool,
+    s: &Subject,
+) -> Result<Vec<crate::views::growth::GrowthSeries>, sqlx::Error> {
     use crate::growth_ref::{self, Measure};
     use crate::views::growth::GrowthSeries;
-    let subjects = load_subjects(&state.pool).await?;
-    let s = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
-        .bind(id)
-        .fetch_one(&state.pool)
-        .await?;
 
     async fn raw(
         pool: &sqlx::PgPool,
@@ -362,26 +357,41 @@ pub async fn growth(
 
     let sex = growth_ref::sex_code(s.sex_at_birth.as_deref());
     let mut series: Vec<GrowthSeries> = Vec::new();
-    if let Some(dob) = s.dob {
-        let dob_jd = dob.to_julian_day();
-        let to_age = |rows: Vec<(time::Date, f64)>| -> Vec<(f64, f64)> {
-            rows.into_iter()
-                .map(|(d, v)| ((d.to_julian_day() - dob_jd) as f64 / 30.4375, v))
-                .collect()
+    let Some(dob) = s.dob else { return Ok(series) };
+    let dob_jd = dob.to_julian_day();
+    let to_age = |rows: Vec<(time::Date, f64)>| -> Vec<(f64, f64)> {
+        rows.into_iter()
+            .map(|(d, v)| ((d.to_julian_day() - dob_jd) as f64 / 30.4375, v))
+            .collect()
+    };
+    for (label, unit, code, measure) in [
+        ("Weight", "kg", "29463-7", Measure::Weight),
+        ("Length / height", "cm", "8302-2", Measure::Length),
+        ("Head circumference", "cm", "9843-4", Measure::HeadCirc),
+    ] {
+        let points = to_age(raw(pool, s.id, code).await?);
+        let reference = match sex {
+            Some(sx) => growth_ref::curve(measure, sx),
+            None => Vec::new(),
         };
-        for (label, unit, code, measure) in [
-            ("Weight", "kg", "29463-7", Measure::Weight),
-            ("Length / height", "cm", "8302-2", Measure::Length),
-            ("Head circumference", "cm", "9843-4", Measure::HeadCirc),
-        ] {
-            let points = to_age(raw(&state.pool, id, code).await?);
-            let reference = match sex {
-                Some(sx) => growth_ref::curve(measure, sx),
-                None => Vec::new(),
-            };
-            series.push(GrowthSeries { label, unit, points, reference });
-        }
+        series.push(GrowthSeries { label, unit, points, reference });
     }
+    Ok(series)
+}
+
+/// `/subjects/{id}/growth` — growth trend charts (PEMR-24).
+pub async fn growth(
+    State(state): State<AppState>,
+    viewer: ViewerContext,
+    Path(id): Path<Uuid>,
+) -> AppResult<Markup> {
+    let subjects = load_subjects(&state.pool).await?;
+    let s = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?;
+    let series = growth_series(&state.pool, &s).await?;
+    let sex = crate::growth_ref::sex_code(s.sex_at_birth.as_deref());
 
     let nav = Nav {
         title: &s.full_name,

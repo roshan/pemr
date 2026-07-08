@@ -5,6 +5,7 @@
 //! draw the measured trend alone.
 
 use maud::{Markup, html};
+use uuid::Uuid;
 
 use crate::growth_ref::RefPoint;
 use crate::models::Subject;
@@ -107,6 +108,94 @@ fn line_chart(s: &GrowthSeries) -> Markup {
         }
     };
     c::summary_panel(html! { (s.label) " " (c::muted(s.unit)) }, body)
+}
+
+/// Compact growth card for the subject chart: the weight-for-age curve with CDC
+/// bands, the latest value of each measure, linked to the full charts.
+pub fn mini_card(subject_id: Uuid, series: &[GrowthSeries]) -> Markup {
+    let weight = series.iter().find(|s| s.label == "Weight");
+    let latest = |label: &str| -> Option<String> {
+        series
+            .iter()
+            .find(|s| s.label == label)
+            .and_then(|s| s.points.last().map(|(_, v)| format!("{} {}", fmt_num(*v), s.unit)))
+    };
+    let chart = match weight {
+        Some(w) if !w.points.is_empty() => mini_chart(w),
+        _ => c::empty_state("No growth measurements"),
+    };
+    c::summary_panel_linked(
+        html! { "Growth " (c::muted("weight for age")) },
+        format!("/subjects/{subject_id}/growth"),
+        html! {
+            (chart)
+            div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted" {
+                @if let Some(w) = latest("Weight") { span { "Wt " span class="text-ink" { (w) } } }
+                @if let Some(l) = latest("Length / height") { span { "Len " span class="text-ink" { (l) } } }
+                @if let Some(h) = latest("Head circumference") { span { "HC " span class="text-ink" { (h) } } }
+            }
+        },
+    )
+}
+
+/// A small SVG (no axis labels) of one measure vs. its CDC bands — for `mini_card`.
+fn mini_chart(s: &GrowthSeries) -> Markup {
+    const W: f64 = 300.0;
+    const H: f64 = 120.0;
+    const PL: f64 = 6.0;
+    const PR: f64 = 16.0;
+    const PT: f64 = 8.0;
+    const PB: f64 = 8.0;
+    let plot_w = W - PL - PR;
+    let plot_h = H - PT - PB;
+    let max_age = s.points.iter().map(|(a, _)| *a).fold(0.0_f64, f64::max);
+    let xmax = (max_age + 2.0).clamp(6.0, 36.0);
+    let refp: Vec<RefPoint> =
+        s.reference.iter().copied().filter(|r| r.age_months <= xmax + 0.001).collect();
+    let mut ys: Vec<f64> = s.points.iter().filter(|(a, _)| *a <= xmax).map(|(_, v)| *v).collect();
+    for r in &refp {
+        ys.push(r.p5);
+        ys.push(r.p95);
+    }
+    if ys.is_empty() {
+        ys = s.points.iter().map(|(_, v)| *v).collect();
+    }
+    let ymin = ys.iter().cloned().fold(f64::INFINITY, f64::min);
+    let ymax = ys.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let yspan = if ymax > ymin { ymax - ymin } else { 1.0 };
+    let xspan = if xmax > 0.0 { xmax } else { 1.0 };
+    let sx = |a: f64| PL + (a / xspan) * plot_w;
+    let sy = |v: f64| PT + (1.0 - (v - ymin) / yspan) * plot_h;
+    let refline = |sel: &dyn Fn(&RefPoint) -> f64| -> String {
+        refp.iter()
+            .map(|r| format!("{:.1},{:.1}", sx(r.age_months), sy(sel(r))))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let subj: String = s
+        .points
+        .iter()
+        .filter(|(a, _)| *a <= xmax)
+        .map(|(a, v)| format!("{:.1},{:.1}", sx(*a), sy(*v)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let has_ref = !refp.is_empty();
+    html! {
+        svg viewBox="0 0 300 120" class="w-full h-auto" role="img"
+            aria-label=(format!("{} for age", s.label)) {
+            @if has_ref {
+                polyline points=(refline(&|r| r.p5)) fill="none" stroke="#e2e8f0" stroke-width="1" {}
+                polyline points=(refline(&|r| r.p95)) fill="none" stroke="#e2e8f0" stroke-width="1" {}
+                polyline points=(refline(&|r| r.p50)) fill="none" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 2" {}
+            }
+            @if !subj.is_empty() {
+                polyline points=(subj) fill="none" stroke="#4f46e5" stroke-width="1.5" {}
+                @for (a, v) in s.points.iter().filter(|(a, _)| *a <= xmax) {
+                    circle cx=(format!("{:.1}", sx(*a))) cy=(format!("{:.1}", sy(*v))) r="2" fill="#4f46e5" {}
+                }
+            }
+        }
+    }
 }
 
 pub fn page(

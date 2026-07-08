@@ -63,7 +63,7 @@ pub fn list_page(nav: &Nav<'_>, subjects: &[Subject], counts: &[(uuid::Uuid, i64
 pub fn dashboard_page(
     nav: &Nav<'_>,
     subject: &Subject,
-    summary: &ClinicalSummary,
+    cards: &[Markup],
     data: &DashboardData<'_>,
     timeline: &dashboard::TimelineData,
 ) -> Markup {
@@ -72,7 +72,13 @@ pub fn dashboard_page(
     let inner = dashboard::body(nav, data, false);
     let body = html! {
         (bio_header(subject))
-        (clinical_summary(summary))
+        // The clinical summary is an ordered set of self-contained modules
+        // (`subject_modules`); this page just lays out whatever cards they
+        // produced — it has no per-feature knowledge.
+        section class="mb-6" {
+            (c::section_heading("Clinical summary"))
+            (c::card_grid(html! { @for card in cards { (card) } }))
+        }
         section class="mb-6" {
             div class="flex items-baseline justify-between mb-2" {
                 (c::section_heading("Timeline"))
@@ -102,150 +108,6 @@ pub struct ClinicalSummary {
     pub insurance: Vec<InsuranceCoverageRow>,
     /// Vaccines due or overdue (from the forecast), for the panel badge.
     pub vaccines_due: usize,
-}
-
-fn fmt_num(n: f64) -> String {
-    if n.fract() == 0.0 { format!("{}", n as i64) } else { format!("{n}") }
-}
-
-fn clinical_summary(cs: &ClinicalSummary) -> Markup {
-    html! {
-        section class="mb-6" {
-            (c::section_heading("Clinical summary"))
-            (c::card_grid(html! {
-                (c::summary_panel("Problems", if cs.conditions.is_empty() {
-                    c::empty_state("No active problems")
-                } else {
-                    truncated_list(cs.conditions.iter().map(|x| c::panel_list_item(
-                        html! { (x.name) },
-                        html! { @if let Some(d) = x.onset_date { "since " (d) } },
-                    )), cs.conditions.len(), None)
-                }))
-                (c::summary_panel("Medications", if cs.medications.is_empty() {
-                    c::empty_state("No active medications")
-                } else {
-                    truncated_list(cs.medications.iter().map(|m| c::panel_list_item(
-                        html! { (m.name) },
-                        html! {
-                            @if let Some(dose) = &m.dose { (dose) }
-                            @if let Some(freq) = &m.frequency { " · " (freq) }
-                        },
-                    )), cs.medications.len(), None)
-                }))
-                (c::summary_panel("Allergies", if cs.allergies.is_empty() {
-                    if cs.no_known_allergies {
-                        c::empty_state("No known allergies (asserted)")
-                    } else {
-                        c::empty_state("No allergies recorded")
-                    }
-                } else {
-                    truncated_list(cs.allergies.iter().map(|a| c::panel_list_item(
-                        html! { (a.substance) },
-                        html! {
-                            @if let Some(crit) = &a.criticality { (crit) }
-                            @else if let Some(sev) = &a.severity { (sev) }
-                        },
-                    )), cs.allergies.len(), None)
-                }))
-                (c::summary_panel("Recent vitals & labs", if cs.vitals.is_empty() {
-                    c::empty_state("No vitals or labs recorded")
-                } else {
-                    truncated_list(cs.vitals.iter().map(|v| {
-                        let val = v.value_num.map(fmt_num)
-                            .or_else(|| v.value_text.clone())
-                            .unwrap_or_else(|| "—".into());
-                        c::panel_list_item(
-                            html! {
-                                (v.display)
-                                @if let Some(f) = &v.abnormal_flag {
-                                    @if f != "normal" { " " (c::badge_warn(f)) }
-                                }
-                            },
-                            html! {
-                                (val) @if let Some(u) = &v.unit { " " (u) }
-                                " · " (v.effective_on)
-                            },
-                        )
-                    }), cs.vitals.len(), None)
-                }))
-                (c::summary_panel_linked(html! {
-                    "Immunizations"
-                    @if cs.vaccines_due > 0 { " " (c::badge_warn(format!("{} due", cs.vaccines_due))) }
-                }, format!("/subjects/{}/immunizations", cs.subject_id),
-                if cs.immunizations.is_empty() {
-                    c::empty_state("No immunizations recorded")
-                } else {
-                    truncated_list(cs.immunizations.iter().map(|im| c::panel_list_item(
-                        html! { (im.vaccine) },
-                        html! { @if let Some(d) = im.occurred_at { (d) } },
-                    )), cs.immunizations.len(), Some(format!("/subjects/{}/immunizations", cs.subject_id)))
-                }))
-                (c::summary_panel_linked("Upcoming appointments",
-                format!("/subjects/{}/appointments", cs.subject_id),
-                if cs.upcoming_appts.is_empty() {
-                    c::empty_state("None scheduled")
-                } else {
-                    truncated_list(cs.upcoming_appts.iter().map(|ap| c::panel_list_item(
-                        html! { (ap.title) },
-                        html! { (ap.starts_at.date()) },
-                    )), cs.upcoming_appts.len(), Some(format!("/subjects/{}/appointments", cs.subject_id)))
-                }))
-                (c::summary_panel_linked("Care team",
-                format!("/subjects/{}/care-team", cs.subject_id),
-                if cs.care_team.is_empty() {
-                    c::empty_state("No care team recorded")
-                } else {
-                    truncated_list(cs.care_team.iter().map(|m| c::panel_list_item(
-                        html! {
-                            (m.full_name)
-                            @if let Some(sp) = &m.specialty { " " (c::muted(sp)) }
-                        },
-                        html! { (m.role) },
-                    )), cs.care_team.len(), Some(format!("/subjects/{}/care-team", cs.subject_id)))
-                }))
-                (c::summary_panel_linked("Insurance", "/insurance",
-                if cs.insurance.is_empty() {
-                    c::empty_state("No insurance recorded")
-                } else {
-                    truncated_list(cs.insurance.iter().map(|ins| c::panel_list_item(
-                        html! {
-                            (ins.payer_name)
-                            @if let Some(pn) = &ins.plan_name { " " (c::muted(pn)) }
-                        },
-                        html! {
-                            @if let Some(m) = &ins.member_id { (m) " · " }
-                            (ins.plan_kind) " · " (ins.relationship)
-                        },
-                    )), cs.insurance.len(), Some("/insurance".to_string()))
-                }))
-            }))
-        }
-    }
-}
-
-const CARD_MAX: usize = 4;
-
-fn truncated_list(
-    items: impl Iterator<Item = Markup>,
-    total: usize,
-    more_href: Option<String>,
-) -> Markup {
-    let shown: Vec<Markup> = items.take(CARD_MAX).collect();
-    let overflow = total.saturating_sub(shown.len());
-    html! {
-        (c::panel_list(html! {
-            @for item in shown { (item) }
-        }))
-        @if overflow > 0 {
-            @if let Some(href) = more_href {
-                a href=(href) class="block mt-2 text-xs text-brand hover:underline" {
-                    "and " (overflow) " more →"
-                }
-            } @else {
-                p class="mt-2 text-xs text-muted" { "and " (overflow) " more" }
-            }
-        }
-    }
 }
 
 fn bio_header(subject: &Subject) -> Markup {
