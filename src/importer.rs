@@ -1612,3 +1612,24 @@ pub fn preview_ehi(export_dir: &Path) -> Preview {
     }
     p
 }
+
+/// Look up a source by case-insensitive name, creating it (`kind='other'`) if
+/// absent. Shared by the offline CLI and the web upload handler.
+pub async fn ensure_source(pool: &PgPool, name: &str) -> Result<Uuid, sqlx::Error> {
+    if let Some(id) =
+        sqlx::query_scalar::<_, Uuid>("select id from sources where lower(name) = lower($1)")
+            .bind(name)
+            .fetch_optional(pool)
+            .await?
+    {
+        return Ok(id);
+    }
+    let id = Uuid::now_v7();
+    sqlx::query("insert into sources (id, name, kind, notes) values ($1,$2,'other',$3)")
+        .bind(id)
+        .bind(name)
+        .bind("Auto-created by import.")
+        .execute(pool)
+        .await?;
+    Ok(id)
+}

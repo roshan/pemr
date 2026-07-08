@@ -5,6 +5,7 @@ pub mod components;
 pub mod dashboard;
 pub mod growth;
 pub mod immunizations;
+pub mod import;
 pub mod incident;
 pub mod insurance;
 pub mod layout;

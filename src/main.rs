@@ -232,6 +232,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/settings/sync/{name}/run",
             post(handlers::sync::run_task),
         )
+        .route(
+            "/settings/import",
+            get(handlers::import::page).post(handlers::import::upload),
+        )
         .layer(axum::middleware::from_fn_with_state(
             viewer_cfg,
             viewer::middleware,

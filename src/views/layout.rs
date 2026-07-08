@@ -73,6 +73,7 @@ fn top_bar(nav: &Nav<'_>) -> Markup {
                     (nav_link("/subjects",  "Subjects",  nav.current_path))
                     (nav_link("/settings/api-keys", "API keys", nav.current_path))
                     (nav_link("/settings/sync", "Sync", nav.current_path))
+                    (nav_link("/settings/import", "Import", nav.current_path))
                 }
             }
             @if let Some(email) = &nav.viewer.email {

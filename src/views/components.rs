@@ -216,6 +216,19 @@ pub fn button_primary(label: impl Render) -> Markup {
     }
 }
 
+/// A submit button carrying a `name`/`value` — for forms with more than one
+/// action (e.g. Preview vs Import). `primary` picks the filled vs outline look.
+pub fn submit_action(name: &str, value: &str, label: impl Render, primary: bool) -> Markup {
+    let variant = if primary {
+        " bg-brand text-white hover:bg-indigo-700"
+    } else {
+        " border border-line bg-surface text-ink hover:bg-slate-50"
+    };
+    html! {
+        button type="submit" name=(name) value=(value) class={(BTN_BASE) (variant)} { (label) }
+    }
+}
+
 /// Anchor styled as a primary button.
 pub fn button_link_primary(href: impl Render, label: impl Render) -> Markup {
     html! {
@@ -461,6 +474,15 @@ pub fn alert_info(text: impl Render) -> Markup {
     html! {
         div class="rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-muted" {
             (text)
+        }
+    }
+}
+
+/// A scrollable monospace block — import previews / extracted-row samples.
+pub fn mono_lines(lines: &[String]) -> Markup {
+    html! {
+        div class="max-h-96 overflow-y-auto rounded-md border border-line bg-slate-50 p-3 font-mono text-xs text-ink" {
+            @for l in lines { div { (l) } }
         }
     }
 }

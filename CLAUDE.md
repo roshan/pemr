@@ -184,6 +184,8 @@ Hard-won facts (do not regress):
 - **Subject is REQUIRED and caller-specified** (`--subject`) — an EHI export names the patient only by internal id, so never auto-detect. Provenance key `ehi_{table}_{row-id}`.
 - **v1 scope (surfaced as fidelity warnings):** encounter diagnoses (`PAT_ENC_DX`, incl. acute events like fractures), RTF clinical notes, procedures, and labs (absent in the sampled export) are **not** imported yet.
 - `CItem` gained optional richer fields for EHI (the C-CDA path passes `None`): `Immunization` +`dose_number`/`lot_number`/`site`/`route`, `Condition` +`resolved`, `Medication` +`dose`/`route`/`status`/`started`.
+- **Web upload (`/settings/import`, `handlers::import`):** the EHI import is ALSO a browser upload — pick subject, drop the zip, **Preview** (dry-run) → **Import** (commit), run in-process against the live DB. This is a deliberate exception to the "bulk imports are CLI-only" convention above, made because we re-import these repeatedly (multiple family members × portals). C-CDA/FHIR uploads stay CLI-only for now. The handler extracts only `EHITables/*.tsv` into a temp dir under `FILES_DIR` (writable in the distroless container; `/tmp` may not be), then reuses `preview_ehi`/`import_ehi`.
+- **Gotcha — Windows zip separators.** Epic zips the EHI export on Windows, so zip entry names use **backslashes** (`EHITables\IMMUNE.tsv`). The upload handler normalizes `\`→`/` before matching; a CLI import pointed at an already-extracted directory never hits this, but the raw-zip path must.
 
 ## Schema rules
 

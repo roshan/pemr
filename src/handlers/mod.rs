@@ -11,6 +11,7 @@ pub mod appointments;
 pub mod care_team;
 pub mod clinical;
 pub mod dashboard;
+pub mod import;
 pub mod incidents;
 pub mod insurance;
 pub mod providers;
