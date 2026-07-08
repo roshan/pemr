@@ -236,6 +236,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/settings/import",
             get(handlers::import::page).post(handlers::import::upload),
         )
+        .route("/settings/import/form", get(handlers::import::form))
         .layer(axum::middleware::from_fn_with_state(
             viewer_cfg,
             viewer::middleware,

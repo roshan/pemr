@@ -1,7 +1,9 @@
-//! The unified **Import** page — every way to get clinical data into the EMR in
-//! one place: upload an export file (Epic EHI zip), import from a portal (CDPH
-//! vaccine record), and the run history. Replaces the old separate Sync page.
-//! See `handlers::import` (file upload) and `handlers::sync` (portal imports).
+//! The unified **Import** page: pick an *import type*, then fill in that method's
+//! form (htmx-swapped into `#import-form`, so the page stays one picker + one
+//! form rather than a growing stack). The run history persists below. Adding a
+//! new import method = one `IMPORT_TYPES` entry + one `type_form` arm.
+//! See `handlers::import` (page + picker + file upload) and `handlers::sync`
+//! (the CDPH portal import).
 
 use maud::{Markup, html};
 
@@ -19,10 +21,23 @@ pub enum Outcome {
     Committed(importer::Counts),
 }
 
+/// Import methods shown in the picker. Keep this the single source of truth —
+/// add a `(key, label)` here and a matching `type_form` arm to extend.
+pub const IMPORT_TYPES: &[(&str, &str)] = &[
+    ("ehi", "Epic EHI export (file upload)"),
+    ("dvr", "CDPH Digital Vaccination Record"),
+];
+pub const DEFAULT_TYPE: &str = "ehi";
+
+pub fn is_type(key: &str) -> bool {
+    IMPORT_TYPES.iter().any(|(k, _)| *k == key)
+}
+
 pub fn page(
     nav: &Nav<'_>,
     subjects: &[Subject],
     jobs: &[SyncJob],
+    selected_type: &str,
     source_value: &str,
     ehi: Option<Outcome>,
     vaccine_result: Option<(&str, &str)>,
@@ -30,17 +45,46 @@ pub fn page(
     let body = html! {
         (c::page_title("Import"))
         p class="mb-6 max-w-xl text-sm text-muted" {
-            "Bring clinical data into the EMR — upload an export file, or import from a portal."
+            "Bring clinical data into the EMR. Pick what you're importing, then fill in that form."
         }
 
-        // ── Upload an export file (Epic EHI) ─────────────────────────────
-        section class="mb-10" {
-            (c::section_heading("Upload an export file"))
+        section class="mb-6 max-w-xl" {
+            (c::field_with_hint(
+                "Import type",
+                "Choose the source. More types appear here as we add them.",
+                c::hx_select("import_type", "/settings/import/form", "#import-form", html! {
+                    @for &(k, label) in IMPORT_TYPES {
+                        (c::select_option(k, label, k == selected_type))
+                    }
+                }),
+            ))
+        }
+
+        // Swapped in place by the picker; the picker itself lives outside so it persists.
+        div id="import-form" {
+            (type_form(selected_type, subjects, source_value, ehi, vaccine_result))
+        }
+
+        (sync::history_table(jobs))
+    };
+    shell(nav, body)
+}
+
+/// The form for the selected import type — what the picker swaps into
+/// `#import-form`, and what a submit re-renders (carrying its result).
+pub fn type_form(
+    key: &str,
+    subjects: &[Subject],
+    source_value: &str,
+    ehi: Option<Outcome>,
+    vaccine_result: Option<(&str, &str)>,
+) -> Markup {
+    match key {
+        "ehi" => html! {
+            (c::section_heading("Epic EHI export"))
             div class="mb-4 mt-1 max-w-xl space-y-2 text-sm text-muted" {
                 p {
-                    "Epic "
-                    strong class="text-ink" { "EHI export" }
-                    " — the \"Requested Records\" / \"Computer-readable EHI export\" zip from a MyChart records request. Pick the subject, "
+                    "The \"Requested Records\" / \"Computer-readable EHI export\" zip from a MyChart records request. "
                     strong class="text-ink" { "Preview" }
                     " to see what will import, then "
                     strong class="text-ink" { "Import" }
@@ -51,20 +95,13 @@ pub fn page(
                 div class="mb-4 max-w-xl" { (outcome_view(o)) }
             }
             (ehi_form(subjects, source_value))
-        }
-
-        // ── Import from a portal (CDPH vaccine record) ───────────────────
-        section class="mb-10" {
-            (c::section_heading("Vaccine record (CDPH)"))
-            @if let Some(p) = crate::sync::provider("dvr") {
-                p class="mb-4 mt-1 text-sm text-muted" { (p.blurb) }
-            }
-            (sync::dvr_form(subjects, vaccine_result))
-        }
-
-        (sync::history_table(jobs))
-    };
-    shell(nav, body)
+        },
+        "dvr" => html! {
+            (c::section_heading("CDPH Digital Vaccination Record"))
+            div class="mt-1" { (sync::dvr_form(subjects, vaccine_result)) }
+        },
+        _ => c::alert_info("Unsupported import type."),
+    }
 }
 
 fn ehi_form(subjects: &[Subject], source_value: &str) -> Markup {

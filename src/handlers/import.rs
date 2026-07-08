@@ -6,8 +6,9 @@
 
 use std::path::Path;
 
-use axum::extract::{Multipart, State};
+use axum::extract::{Multipart, Query, State};
 use maud::Markup;
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::error::AppResult;
@@ -24,7 +25,20 @@ pub async fn page(State(state): State<AppState>, viewer: ViewerContext) -> AppRe
     let subjects = load_subjects(&state.pool).await?;
     let jobs = crate::sync::all_jobs(&state.pool).await?;
     let nav = nav(&subjects, &viewer);
-    Ok(views::page(&nav, &subjects, &jobs, DEFAULT_SOURCE, None, None))
+    Ok(views::page(&nav, &subjects, &jobs, views::DEFAULT_TYPE, DEFAULT_SOURCE, None, None))
+}
+
+#[derive(Deserialize)]
+pub struct TypeQuery {
+    #[serde(default)]
+    pub import_type: String,
+}
+
+/// The import-type picker swaps in the selected method's form (`#import-form`).
+pub async fn form(State(state): State<AppState>, Query(q): Query<TypeQuery>) -> AppResult<Markup> {
+    let subjects = load_subjects(&state.pool).await?;
+    let key = if views::is_type(&q.import_type) { q.import_type.as_str() } else { views::DEFAULT_TYPE };
+    Ok(views::type_form(key, &subjects, DEFAULT_SOURCE, None, None))
 }
 
 pub async fn upload(
@@ -58,7 +72,7 @@ pub async fn upload(
     let subjects = load_subjects(&state.pool).await?;
     let jobs = crate::sync::all_jobs(&state.pool).await?;
     let nav = nav(&subjects, &viewer);
-    let render = |o: Outcome| views::page(&nav, &subjects, &jobs, source_value, Some(o), None);
+    let render = |o: Outcome| views::page(&nav, &subjects, &jobs, "ehi", source_value, Some(o), None);
 
     // Subject is required — never guessed (the EHI export names the patient only
     // by an internal id).
