@@ -1,70 +1,99 @@
-//! Web upload page for structured clinical bundles (Epic EHI export). Pick a
-//! subject, drop the zip, Preview (dry-run) then Import. See
-//! `handlers::import` for the request side.
+//! The unified **Import** page — every way to get clinical data into the EMR in
+//! one place: upload an export file (Epic EHI zip), import from a portal (CDPH
+//! vaccine record), and the run history. Replaces the old separate Sync page.
+//! See `handlers::import` (file upload) and `handlers::sync` (portal imports).
 
 use maud::{Markup, html};
 
 use crate::importer;
 use crate::models::Subject;
+use crate::sync::SyncJob;
 use crate::views::components as c;
 use crate::views::layout::{Nav, shell};
+use crate::views::sync;
 
-/// The result of a submitted upload, rendered above the form.
+/// The result of a submitted file upload, rendered above the upload form.
 pub enum Outcome {
     Error(String),
     Preview(importer::Preview),
     Committed(importer::Counts),
 }
 
-pub fn page(nav: &Nav<'_>, subjects: &[Subject], source_value: &str, outcome: Option<Outcome>) -> Markup {
+pub fn page(
+    nav: &Nav<'_>,
+    subjects: &[Subject],
+    jobs: &[SyncJob],
+    source_value: &str,
+    ehi: Option<Outcome>,
+    vaccine_result: Option<(&str, &str)>,
+) -> Markup {
     let body = html! {
-        (c::page_title("Import records"))
-
-        div class="mb-4 max-w-xl space-y-2 text-sm text-muted" {
-            p {
-                "Upload an Epic "
-                strong class="text-ink" { "EHI export" }
-                " — the \"Requested Records\" / \"Computer-readable EHI export\" zip from a MyChart records request. Pick the subject, "
-                strong class="text-ink" { "Preview" }
-                " to see what will be imported, then "
-                strong class="text-ink" { "Import" }
-                "."
-            }
-            p { "Re-importing the same export is safe — rows upsert on their source key, so a repeat run updates in place instead of duplicating." }
+        (c::page_title("Import"))
+        p class="mb-6 max-w-xl text-sm text-muted" {
+            "Bring clinical data into the EMR — upload an export file, or import from a portal."
         }
 
-        @if let Some(o) = &outcome {
-            div class="mb-6 max-w-xl" { (outcome_view(o)) }
+        // ── Upload an export file (Epic EHI) ─────────────────────────────
+        section class="mb-10" {
+            (c::section_heading("Upload an export file"))
+            div class="mb-4 mt-1 max-w-xl space-y-2 text-sm text-muted" {
+                p {
+                    "Epic "
+                    strong class="text-ink" { "EHI export" }
+                    " — the \"Requested Records\" / \"Computer-readable EHI export\" zip from a MyChart records request. Pick the subject, "
+                    strong class="text-ink" { "Preview" }
+                    " to see what will import, then "
+                    strong class="text-ink" { "Import" }
+                    ". Re-importing the same export is safe (idempotent)."
+                }
+            }
+            @if let Some(o) = &ehi {
+                div class="mb-4 max-w-xl" { (outcome_view(o)) }
+            }
+            (ehi_form(subjects, source_value))
         }
 
-        (c::form_multipart("/settings/import", html! {
-            (c::field_with_hint(
-                "Subject",
-                "Required — an EHI export names the patient only by internal id, so we never guess.",
-                c::select_field("subject_id", true, || html! {
-                    option value="" disabled selected { "— select a subject —" }
-                    @for s in subjects {
-                        (c::select_option(s.id, html! { (s.given_name) " " (s.family_name) }, false))
-                    }
-                }),
-            ))
-            (c::field_with_hint(
-                "Source",
-                "Where these records came from — used for provenance and dedup. Keep it stable across re-imports.",
-                c::input_text("source", source_value, true, Some(120)),
-            ))
-            (c::field_with_hint(
-                "EHI export (.zip)",
-                "The zip containing an EHITables/ folder.",
-                c::input_file("file"),
-            ))
-            div class="flex items-center gap-2" {
-                (c::submit_action("action", "preview", "Preview", false))
-                (c::submit_action("action", "commit", "Import", true))
+        // ── Import from a portal (CDPH vaccine record) ───────────────────
+        section class="mb-10" {
+            (c::section_heading("Vaccine record (CDPH)"))
+            @if let Some(p) = crate::sync::provider("dvr") {
+                p class="mb-4 mt-1 text-sm text-muted" { (p.blurb) }
             }
-        }))
+            (sync::dvr_form(subjects, vaccine_result))
+        }
+
+        (sync::history_table(jobs))
     };
     shell(nav, body)
+}
+
+fn ehi_form(subjects: &[Subject], source_value: &str) -> Markup {
+    c::form_multipart("/settings/import", html! {
+        (c::field_with_hint(
+            "Subject",
+            "Required — an EHI export names the patient only by internal id, so we never guess.",
+            c::select_field("subject_id", true, || html! {
+                option value="" disabled selected { "— select a subject —" }
+                @for s in subjects {
+                    (c::select_option(s.id, html! { (s.given_name) " " (s.family_name) }, false))
+                }
+            }),
+        ))
+        (c::field_with_hint(
+            "Source",
+            "Where these records came from — used for provenance and dedup. Keep it stable across re-imports.",
+            c::input_text("source", source_value, true, Some(120)),
+        ))
+        (c::field_with_hint(
+            "EHI export (.zip)",
+            "The zip containing an EHITables/ folder.",
+            c::input_file("file"),
+        ))
+        div class="flex items-center gap-2" {
+            (c::submit_action("action", "preview", "Preview", false))
+            (c::submit_action("action", "commit", "Import", true))
+        }
+    })
 }
 
 fn outcome_view(o: &Outcome) -> Markup {

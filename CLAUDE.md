@@ -140,7 +140,7 @@ A small task-runner framework for periodic or on-demand syncs. Lives entirely in
 - **Trigger channel**: `AppState.sync_tx: mpsc::Sender<String>` (channel capacity 32). The sync handler sends the task name; the loop receives it and executes immediately.
 - **Adding a periodic task**: (1) Write `src/sync/<name>.rs` with `pub async fn run(pool: PgPool) -> Result<String, String>`. (2) Add a `TaskDef` to `ALL_TASKS` in `src/sync/mod.rs`. The framework handles DB registration, scheduling, and status tracking.
 - **Manual-only tasks** (like vaccine import) should NOT be in `ALL_TASKS`. Call `sync::record_import(pool, name, status, message)` from the handler to write history into `sync_jobs`.
-- **UI**: `GET /settings/sync` — import form + history table. `POST /settings/sync/vaccine-import` — triggers immediate import. `POST /settings/sync/:name/run` — triggers a scheduled task on-demand.
+- **UI**: folded into the unified **Import** page (`GET /settings/import`, `handlers::import` + `views::import`) — the single nav item for getting data in, with sections for file upload (EHI) and portal imports (CDPH vaccine) + the run-history table. `GET /settings/sync` now 302-redirects there. `POST /settings/sync/vaccine-import` (the CDPH form target) still triggers the import and re-renders the unified page; `POST /settings/sync/:name/run` triggers a scheduled task on-demand.
 
 ### Vaccine records import (`src/sync/vaccine.rs`)
 

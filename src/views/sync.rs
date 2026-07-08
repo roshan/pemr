@@ -33,9 +33,18 @@ pub fn page(
             (provider_form(provider_key, subjects, import_result))
         }
 
+        (history_table(jobs))
+    };
+    shell(nav, body)
+}
+
+/// The sync-run history table (import runs recorded in `sync_jobs`). Shared by
+/// the unified import page.
+pub fn history_table(jobs: &[SyncJob]) -> Markup {
+    html! {
         @if !jobs.is_empty() {
             (c::lane(
-                html! { (c::section_heading("History")) },
+                html! { (c::section_heading("Recent import runs")) },
                 html! {
                     (c::data_table(
                         html! { tr {
@@ -53,8 +62,7 @@ pub fn page(
                 },
             ))
         }
-    };
-    shell(nav, body)
+    }
 }
 
 /// The import form for the selected sync source. This is what the picker swaps
@@ -79,9 +87,9 @@ pub fn provider_form(
     }
 }
 
-/// CDPH Digital Vaccination Record import form (details + form; the heading and
-/// blurb are rendered by `provider_form`).
-fn dvr_form(subjects: &[Subject], import_result: Option<(&str, &str)>) -> Markup {
+/// CDPH Digital Vaccination Record import form (details + form). Rendered on the
+/// unified import page under its own heading.
+pub fn dvr_form(subjects: &[Subject], import_result: Option<(&str, &str)>) -> Markup {
     html! {
         div class="mb-4 space-y-2 text-sm text-muted" {
             p {

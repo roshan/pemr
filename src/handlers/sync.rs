@@ -6,27 +6,29 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::error::AppResult;
+use crate::handlers::import as import_handler;
 use crate::handlers::{AppState, load_subjects};
-use crate::models::empty_to_none;
+use crate::models::{Subject, empty_to_none};
 use crate::sync;
 use crate::viewer::ViewerContext;
+use crate::views::import as import_view;
 use crate::views::layout::Nav;
 use crate::views::sync as views;
 
-pub async fn page(
-    State(state): State<AppState>,
-    viewer: ViewerContext,
-) -> AppResult<Markup> {
-    let subjects = load_subjects(&state.pool).await?;
-    let jobs = sync::all_jobs(&state.pool).await?;
-    let nav = Nav {
-        title: "Sync",
-        current_path: "/settings/sync",
-        subjects: &subjects,
+fn import_nav<'a>(subjects: &'a [Subject], viewer: &'a ViewerContext) -> Nav<'a> {
+    Nav {
+        title: "Import",
+        current_path: "/settings/import",
+        subjects,
         current_subject: viewer.default_subject_id,
-        viewer: &viewer,
-    };
-    Ok(views::page(&nav, &jobs, &subjects, sync::DEFAULT_PROVIDER, None))
+        viewer,
+    }
+}
+
+/// Old `/settings/sync` — folded into the unified Import page. Kept as a redirect
+/// so existing links/bookmarks still land somewhere sensible.
+pub async fn page() -> Redirect {
+    Redirect::to("/settings/import")
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,18 +72,13 @@ pub async fn import_vaccines(
         None => {
             let subjects = load_subjects(&state.pool).await?;
             let jobs = sync::all_jobs(&state.pool).await?;
-            let nav = Nav {
-                title: "Sync",
-                current_path: "/settings/sync",
-                subjects: &subjects,
-                current_subject: viewer.default_subject_id,
-                viewer: &viewer,
-            };
-            return Ok(views::page(
+            let nav = import_nav(&subjects, &viewer);
+            return Ok(import_view::page(
                 &nav,
-                &jobs,
                 &subjects,
-                sync::DEFAULT_PROVIDER,
+                &jobs,
+                import_handler::DEFAULT_SOURCE,
+                None,
                 Some(("error", "Pick a subject before importing.")),
             ));
         }
@@ -109,18 +106,13 @@ pub async fn import_vaccines(
 
     let subjects = load_subjects(&state.pool).await?;
     let jobs = sync::all_jobs(&state.pool).await?;
-    let nav = Nav {
-        title: "Sync",
-        current_path: "/settings/sync",
-        subjects: &subjects,
-        current_subject: viewer.default_subject_id,
-        viewer: &viewer,
-    };
-    Ok(views::page(
+    let nav = import_nav(&subjects, &viewer);
+    Ok(import_view::page(
         &nav,
-        &jobs,
         &subjects,
-        sync::DEFAULT_PROVIDER,
+        &jobs,
+        import_handler::DEFAULT_SOURCE,
+        None,
         Some((status, &message)),
     ))
 }

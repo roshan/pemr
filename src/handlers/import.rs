@@ -18,12 +18,13 @@ use crate::viewer::ViewerContext;
 use crate::views::import::{self as views, Outcome};
 use crate::views::layout::Nav;
 
-const DEFAULT_SOURCE: &str = "MyChart EHI export";
+pub(crate) const DEFAULT_SOURCE: &str = "MyChart EHI export";
 
 pub async fn page(State(state): State<AppState>, viewer: ViewerContext) -> AppResult<Markup> {
     let subjects = load_subjects(&state.pool).await?;
+    let jobs = crate::sync::all_jobs(&state.pool).await?;
     let nav = nav(&subjects, &viewer);
-    Ok(views::page(&nav, &subjects, DEFAULT_SOURCE, None))
+    Ok(views::page(&nav, &subjects, &jobs, DEFAULT_SOURCE, None, None))
 }
 
 pub async fn upload(
@@ -55,8 +56,9 @@ pub async fn upload(
 
     let source_value = if source.trim().is_empty() { DEFAULT_SOURCE } else { source.trim() };
     let subjects = load_subjects(&state.pool).await?;
+    let jobs = crate::sync::all_jobs(&state.pool).await?;
     let nav = nav(&subjects, &viewer);
-    let render = |o: Outcome| views::page(&nav, &subjects, source_value, Some(o));
+    let render = |o: Outcome| views::page(&nav, &subjects, &jobs, source_value, Some(o), None);
 
     // Subject is required — never guessed (the EHI export names the patient only
     // by an internal id).
