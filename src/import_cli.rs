@@ -47,6 +47,12 @@ const USAGE: &str =
 pub async fn run(argv: &[String]) -> R<()> {
     let args = parse_args(argv)?;
 
+    // Epic EHI export (TSV tables) — detected by an EHITables/ directory. A very
+    // different shape from the C-CDA / FHIR document path below.
+    if let Some(tables) = importer::ehi_tables_dir(std::path::Path::new(&args.path)) {
+        return run_ehi(&args, &tables).await;
+    }
+
     let docs = load_documents(&args.path)?;
     if docs.is_empty() {
         return Err(format!("no C-CDA (.xml) or FHIR (.json) documents found at {}", args.path).into());
@@ -87,6 +93,12 @@ pub async fn run(argv: &[String]) -> R<()> {
         total.observations += c.observations;
         total.skipped += c.skipped;
     }
+    print_import_result(&total);
+    Ok(())
+}
+
+/// Print import counts + fidelity warnings (shared by the doc and EHI paths).
+fn print_import_result(total: &importer::Counts) {
     eprintln!(
         "\n✓ imported: {} allergies · {} meds · {} conditions · {} incidents · {} immunizations · {} observations",
         total.allergies, total.medications, total.conditions, total.incidents, total.immunizations, total.observations
@@ -99,6 +111,37 @@ pub async fn run(argv: &[String]) -> R<()> {
             eprintln!("    - {w}");
         }
     }
+}
+
+/// Import an Epic EHI export: dry-run preview by default, `--commit` to write.
+/// Subject is REQUIRED — the export carries no patient name we trust.
+async fn run_ehi(args: &Args, tables: &std::path::Path) -> R<()> {
+    eprintln!("Epic EHI export detected → {}", tables.display());
+    let export_root = std::path::Path::new(&args.path);
+
+    // Parse-only preview — safe, no DB connection needed.
+    let preview = importer::preview_ehi(export_root);
+    print_preview(&preview);
+
+    if !args.commit {
+        eprintln!("\nDRY RUN — nothing written. Re-run with --commit to import.");
+        return Ok(());
+    }
+
+    if args.subject.is_none() {
+        return Err("EHI import requires --subject <uuid|name> — the export identifies the \
+                    patient only by an internal id, so we never guess the subject"
+            .into());
+    }
+    let database_url =
+        std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL is required for --commit")?;
+    let pool = crate::db::connect(&database_url).await?;
+    let subject_id = resolve_subject(&pool, args, &[]).await?;
+    let source_id = ensure_source(&pool, &args.source).await?;
+    eprintln!("\nimporting → subject {subject_id}, source '{}'", args.source);
+
+    let total = importer::import_ehi(&pool, subject_id, source_id, export_root).await?;
+    print_import_result(&total);
     Ok(())
 }
 

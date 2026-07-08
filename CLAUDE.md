@@ -171,6 +171,20 @@ Structured clinical exports (allergies, meds, problems, immunizations, labs, vit
 - **Conditions dedup by code.** The same chronic problem recurs across visit documents with a *different* HL7 entry-id, so `(source_id, external_id)` alone leaves duplicates. When a condition is coded, the upsert keys on `(subject_id, code, code_system)` and updates in place rather than inserting a second row (uncoded conditions still fall back to the `(source_id, external_id)` upsert). This is a runtime guard, not a DB constraint — no unique index (so it never blocks a migration on dirty data).
 - **Fidelity warnings:** `import_ccda_docs`/`preview_ccda_docs` return `Counts.warnings` / `Preview.warnings` — non-empty means low fidelity (a document failed to parse, a section was present but imported nothing, or entries were dropped for a missing name/date). The API import endpoints return this in JSON and the CLI prints it, so an importing agent can react rather than assume a clean load. The CLI is **dry-run by default and needs `DATABASE_URL` only under `--commit`**.
 
+### Epic EHI export (TSV) — `import_ehi` / `preview_ehi`
+
+`personal-emr import <dir>` also handles an **Epic EHI export** (the "EHI Export" / "Requested Records" download — *not* C-CDA/FHIR): `import_cli` detects an `EHITables/` directory and routes to `importer::preview_ehi` / `import_ehi`. Same `CItem` → `upsert_item` core, so dedup/idempotency + provenance are shared. Validated against a real pediatric export (idempotent re-import: counts unchanged, zero dupes).
+
+Hard-won facts (do not regress):
+- **Name-denormalized, code-poor.** Epic puts the readable value in `*_ID_*_NAME`/`*_C_NAME` columns and omits the raw code almost everywhere — **no CVX/ICD-10/LOINC/SNOMED/CPT with data**. The only real machine code is **NDC** (immunizations). We map on names, assign canonical growth LOINCs ourselves, carry NDC where present.
+- **Flowsheet values live in a separate table.** Vitals/growth = `IP_FLWSHT_MEAS` ⋈ **`V_EHI_FLO_MEAS_VALUE`** on `(FSD_ID, LINE)` (the value companion — despite the `V_EHI_` prefix it is NOT audit; do not filter it out). Whitelist the real growth measures (`WEIGHT/SCALE`, `HEIGHT`, `HEAD CIRCUMFERENCE`, `TEMPERATURE`) out of ~40 template-formula rows, **convert oz→kg / in→cm**, and assign canonical growth LOINC (weight `29463-7`, length `8302-2`, head-circ `9843-4`) so the CDC growth charts (`handlers::subjects::growth`) render.
+- **Immunizations** from `IMMUNE` (name + `NDC_NUM_ID_NDC_CODE` + lot/site/route). **Vaccine `ORDER_MED` orders are skipped** (`looks_like_vaccine`) — they duplicate the authoritative `IMMUNE` rows; only real meds land in `medications`.
+- **Conditions** from `PROBLEM_LIST` (name + status + onset/resolved); birth events route to incidents via `is_birth_event`.
+- **Allergies:** `ALLERGY_FLAG = Y` (with an empty `ALLERGY` table) is a positive **No Known Allergies** assertion → sets `subjects.no_known_allergies`, not an allergy row.
+- **Subject is REQUIRED and caller-specified** (`--subject`) — an EHI export names the patient only by internal id, so never auto-detect. Provenance key `ehi_{table}_{row-id}`.
+- **v1 scope (surfaced as fidelity warnings):** encounter diagnoses (`PAT_ENC_DX`, incl. acute events like fractures), RTF clinical notes, procedures, and labs (absent in the sampled export) are **not** imported yet.
+- `CItem` gained optional richer fields for EHI (the C-CDA path passes `None`): `Immunization` +`dose_number`/`lot_number`/`site`/`route`, `Condition` +`resolved`, `Medication` +`dose`/`route`/`status`/`started`.
+
 ## Schema rules
 
 - Every clinically-meaningful entity table carries `subject_id uuid not null references subjects(id)`. Non-negotiable. Do not add a clinical entity without this.

@@ -12,6 +12,7 @@
 
 use serde_json::Value;
 use sqlx::PgPool;
+use std::path::{Path, PathBuf};
 use time::Date;
 use uuid::Uuid;
 
@@ -360,13 +361,22 @@ enum CItem {
         criticality: Option<String>,
         severity: Option<String>,
     },
-    Medication { name: String, code: Option<String>, code_system: Option<String> },
+    Medication {
+        name: String,
+        code: Option<String>,
+        code_system: Option<String>,
+        dose: Option<String>,
+        route: Option<String>,
+        status: Option<String>,
+        started: Option<Date>,
+    },
     Condition {
         name: String,
         code: Option<String>,
         code_system: Option<String>,
         status: Option<String>,
         onset: Option<Date>,
+        resolved: Option<Date>,
     },
     /// A real-world event Epic filed in the problem list (e.g. a delivery) —
     /// routed to an incident rather than a chronic condition.
@@ -376,6 +386,10 @@ enum CItem {
         code: Option<String>,
         code_system: Option<String>,
         occurred: Option<Date>,
+        dose_number: Option<i32>,
+        lot_number: Option<String>,
+        site: Option<String>,
+        route: Option<String>,
     },
     Observation {
         display: String,
@@ -747,6 +761,10 @@ fn parse_ccda(xml: &str) -> (Vec<(String, CItem)>, ParseStats) {
                             code: code_node.and_then(|c| c.attribute("code")).map(str::to_string),
                             code_system: code_node
                                 .and_then(|c| norm_system(c.attribute("codeSystemName"))),
+                            dose: None,
+                            route: None,
+                            status: None,
+                            started: None,
                         },
                     ));
                 }
@@ -796,6 +814,7 @@ fn parse_ccda(xml: &str) -> (Vec<(String, CItem)>, ParseStats) {
                             code_system,
                             status: condition_status(obs),
                             onset,
+                            resolved: None,
                         }
                     };
                     out.push((ext_id, item));
@@ -836,6 +855,10 @@ fn parse_ccda(xml: &str) -> (Vec<(String, CItem)>, ParseStats) {
                             code_system: code_node
                                 .and_then(|c| norm_system(c.attribute("codeSystemName"))),
                             occurred,
+                            dose_number: None,
+                            lot_number: None,
+                            site: None,
+                            route: None,
                         },
                     ));
                 }
@@ -961,16 +984,23 @@ async fn upsert_item(
             .bind(&reaction).bind(&reaction_code).bind(&reaction_code_system).bind(&criticality).bind(&severity)
             .bind(source_id).bind(ext_id).execute(&mut *conn).await?;
         }
-        CItem::Medication { name, code, code_system } => {
+        CItem::Medication { name, code, code_system, dose, route, status, started } => {
+            // medications.status is NOT NULL (default 'active'); fall back rather than NULL.
+            let status = status.unwrap_or_else(|| "active".to_string());
             sqlx::query(&format!(
-                "insert into medications (id, subject_id, name, code, code_system, source_id, external_id)
-                 values ($1,$2,$3,$4,$5,$6,$7){ON_CONFLICT}
-                    name=excluded.name, code=excluded.code, code_system=excluded.code_system, updated_at=now()"
+                "insert into medications (id, subject_id, name, code, code_system, dose, route, status, started_on, source_id, external_id)
+                 values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11){ON_CONFLICT}
+                    name=excluded.name, code=excluded.code, code_system=excluded.code_system,
+                    dose=coalesce(excluded.dose, medications.dose),
+                    route=coalesce(excluded.route, medications.route),
+                    status=excluded.status,
+                    started_on=coalesce(excluded.started_on, medications.started_on), updated_at=now()"
             ))
             .bind(Uuid::now_v7()).bind(subject_id).bind(&name).bind(&code).bind(&code_system)
+            .bind(&dose).bind(&route).bind(&status).bind(started)
             .bind(source_id).bind(ext_id).execute(&mut *conn).await?;
         }
-        CItem::Condition { name, code, code_system, status, onset } => {
+        CItem::Condition { name, code, code_system, status, onset, resolved } => {
             // conditions.status is NOT NULL (default 'active'); Epic omits the
             // status observation on some problems, so fall back rather than NULL.
             let status = status.unwrap_or_else(|| "active".to_string());
@@ -988,21 +1018,23 @@ async fn upsert_item(
                 if let Some(id) = existing {
                     sqlx::query(
                         "update conditions set name=$2, status=$3,
-                           onset_date=coalesce($4, onset_date), updated_at=now() where id=$1",
+                           onset_date=coalesce($4, onset_date),
+                           resolved_date=coalesce($5, resolved_date), updated_at=now() where id=$1",
                     )
-                    .bind(id).bind(&name).bind(&status).bind(onset)
+                    .bind(id).bind(&name).bind(&status).bind(onset).bind(resolved)
                     .execute(&mut *conn).await?;
                     return Ok(());
                 }
             }
             sqlx::query(&format!(
-                "insert into conditions (id, subject_id, name, code, code_system, status, onset_date, source_id, external_id)
-                 values ($1,$2,$3,$4,$5,$6,$7,$8,$9){ON_CONFLICT}
+                "insert into conditions (id, subject_id, name, code, code_system, status, onset_date, resolved_date, source_id, external_id)
+                 values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10){ON_CONFLICT}
                     name=excluded.name, code=excluded.code, code_system=excluded.code_system,
-                    status=excluded.status, onset_date=excluded.onset_date, updated_at=now()"
+                    status=excluded.status, onset_date=excluded.onset_date,
+                    resolved_date=excluded.resolved_date, updated_at=now()"
             ))
             .bind(Uuid::now_v7()).bind(subject_id).bind(&name).bind(&code).bind(&code_system)
-            .bind(&status).bind(onset).bind(source_id).bind(ext_id).execute(&mut *conn).await?;
+            .bind(&status).bind(onset).bind(resolved).bind(source_id).bind(ext_id).execute(&mut *conn).await?;
         }
         CItem::Incident { title, occurred } => {
             // Incidents carry no provenance (source_id/external_id) by schema
@@ -1023,15 +1055,20 @@ async fn upsert_item(
                 .execute(&mut *conn).await?;
             }
         }
-        CItem::Immunization { vaccine, code, code_system, occurred } => {
+        CItem::Immunization { vaccine, code, code_system, occurred, dose_number, lot_number, site, route } => {
             sqlx::query(&format!(
-                "insert into immunizations (id, subject_id, vaccine, code, code_system, occurred_at, source_id, external_id)
-                 values ($1,$2,$3,$4,$5,$6,$7,$8){ON_CONFLICT}
+                "insert into immunizations (id, subject_id, vaccine, code, code_system, occurred_at, dose_number, lot_number, site, route, source_id, external_id)
+                 values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12){ON_CONFLICT}
                     vaccine=excluded.vaccine, code=excluded.code, code_system=excluded.code_system,
-                    occurred_at=excluded.occurred_at, updated_at=now()"
+                    occurred_at=excluded.occurred_at,
+                    dose_number=coalesce(excluded.dose_number, immunizations.dose_number),
+                    lot_number=coalesce(excluded.lot_number, immunizations.lot_number),
+                    site=coalesce(excluded.site, immunizations.site),
+                    route=coalesce(excluded.route, immunizations.route), updated_at=now()"
             ))
             .bind(Uuid::now_v7()).bind(subject_id).bind(&vaccine).bind(&code).bind(&code_system)
-            .bind(occurred).bind(source_id).bind(ext_id).execute(&mut *conn).await?;
+            .bind(occurred).bind(dose_number).bind(&lot_number).bind(&site).bind(&route)
+            .bind(source_id).bind(ext_id).execute(&mut *conn).await?;
         }
         CItem::Observation {
             display, code, code_system, value_num, value_text, unit,
@@ -1171,44 +1208,407 @@ pub fn preview_ccda_docs(xmls: &[String]) -> Preview {
     let (items, warnings) = collect_ccda(xmls);
     let mut p = Preview { warnings, ..Default::default() };
     for item in items.values() {
-        tally(&mut p.counts, item);
-        let sample = match item {
-            CItem::Allergy { substance, criticality, severity, reaction, .. } => format!(
-                "allergy    {substance}{}{}{}",
-                criticality.as_deref().map(|c| format!(" [crit:{c}]")).unwrap_or_default(),
-                severity.as_deref().map(|s| format!(" [sev:{s}]")).unwrap_or_default(),
-                reaction.as_deref().map(|r| format!(" → {r}")).unwrap_or_default(),
-            ),
-            CItem::Medication { name, .. } => format!("med        {name}"),
-            CItem::Condition { name, status, onset, .. } => format!(
-                "condition  {name}{}{}",
-                status.as_deref().map(|s| format!(" [{s}]")).unwrap_or_default(),
-                onset.map(|d| format!(" ({d})")).unwrap_or_default(),
-            ),
-            CItem::Incident { title, occurred } => format!(
-                "incident   {title}{}",
-                occurred.map(|d| format!(" ({d})")).unwrap_or_default(),
-            ),
-            CItem::Immunization { vaccine, occurred, .. } => format!(
-                "immun      {vaccine}{}",
-                occurred.map(|d| format!(" ({d})")).unwrap_or_default(),
-            ),
-            CItem::Observation { display, value_num, value_text, unit, category, effective, .. } => {
-                if *category == "vital" {
-                    p.vitals += 1
-                } else {
-                    p.labs += 1
-                }
-                let val = value_num
-                    .map(|v| v.to_string())
-                    .or_else(|| value_text.clone())
-                    .unwrap_or_default();
-                format!("{category:<6}     {display} = {val} {} @{effective}", unit.as_deref().unwrap_or(""))
+        preview_push(&mut p, item);
+    }
+    p
+}
+
+/// Tally one item into a `Preview` and append a human-readable sample line
+/// (capped at 60). Shared by the C-CDA and EHI preview paths.
+fn preview_push(p: &mut Preview, item: &CItem) {
+    tally(&mut p.counts, item);
+    let sample = match item {
+        CItem::Allergy { substance, criticality, severity, reaction, .. } => format!(
+            "allergy    {substance}{}{}{}",
+            criticality.as_deref().map(|c| format!(" [crit:{c}]")).unwrap_or_default(),
+            severity.as_deref().map(|s| format!(" [sev:{s}]")).unwrap_or_default(),
+            reaction.as_deref().map(|r| format!(" → {r}")).unwrap_or_default(),
+        ),
+        CItem::Medication { name, dose, route, .. } => format!(
+            "med        {name}{}{}",
+            dose.as_deref().map(|d| format!(" [{d}]")).unwrap_or_default(),
+            route.as_deref().map(|r| format!(" {r}")).unwrap_or_default(),
+        ),
+        CItem::Condition { name, status, onset, resolved, .. } => format!(
+            "condition  {name}{}{}{}",
+            status.as_deref().map(|s| format!(" [{s}]")).unwrap_or_default(),
+            onset.map(|d| format!(" ({d}")).unwrap_or_default(),
+            resolved.map(|d| format!("→{d})")).or(onset.map(|_| ")".into())).unwrap_or_default(),
+        ),
+        CItem::Incident { title, occurred } => format!(
+            "incident   {title}{}",
+            occurred.map(|d| format!(" ({d})")).unwrap_or_default(),
+        ),
+        CItem::Immunization { vaccine, occurred, lot_number, site, .. } => format!(
+            "immun      {vaccine}{}{}{}",
+            occurred.map(|d| format!(" ({d})")).unwrap_or_default(),
+            site.as_deref().map(|s| format!(" @{s}")).unwrap_or_default(),
+            lot_number.as_deref().map(|l| format!(" lot {l}")).unwrap_or_default(),
+        ),
+        CItem::Observation { display, value_num, value_text, unit, category, effective, .. } => {
+            if *category == "vital" {
+                p.vitals += 1
+            } else {
+                p.labs += 1
             }
-        };
-        if p.samples.len() < 60 {
-            p.samples.push(sample);
+            let val = value_num
+                .map(|v| v.to_string())
+                .or_else(|| value_text.clone())
+                .unwrap_or_default();
+            format!("{category:<6}     {display} = {val} {} @{effective}", unit.as_deref().unwrap_or(""))
         }
+    };
+    if p.samples.len() < 60 {
+        p.samples.push(sample);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Epic EHI export (TSV) — the "EHI Export" / "Requested Records" download.
+//
+// NOT C-CDA and NOT FHIR: an Epic EHI export is ~3,900 tab-separated Chronicles
+// tables (`EHITables/*.tsv`) plus a per-table HTML schema. Almost all are audit
+// or billing noise; the clinical payload is a handful of well-known tables. We
+// read those and map each row to a `CItem`, reusing the same upsert + dedup core
+// as the C-CDA path.
+//
+// Hard-won facts about the real Epic EHI format (validated against a pediatric
+// export — do not regress):
+//   - It is NAME-DENORMALIZED: the human-readable value is in `*_ID_*_NAME` /
+//     `*_C_NAME` columns; the raw *code* is omitted almost everywhere. There are
+//     NO CVX / ICD-10 / LOINC / SNOMED / CPT codes with data. The only real
+//     machine code present is NDC (on immunizations). So we map on names, assign
+//     canonical growth LOINCs ourselves, and carry NDC where present.
+//   - Flowsheet VALUES are NOT in `IP_FLWSHT_MEAS`; they live in the companion
+//     `V_EHI_FLO_MEAS_VALUE` (which — despite the `V_EHI_` prefix — is a data
+//     table, not an audit trail), joined on `(FSD_ID, LINE)`.
+//   - Vaccine administrations appear BOTH in `IMMUNE` and as `ORDER_MED` orders;
+//     `IMMUNE` is authoritative, so vaccine med-orders are skipped.
+//   - Allergies use `ALLERGY_FLAG` (Y = positively No Known Allergies) with an
+//     empty `ALLERGY` table — a clinical fact, not "no data".
+//
+// Subject is caller-specified (an EHI export identifies the patient only by an
+// internal id — never auto-detect). Provenance key is `ehi_{table}_{row-id}`, so
+// re-import is idempotent on (source_id, external_id).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The `EHITables/` directory given an export root — or the dir itself if it is
+/// already `EHITables/`. None if neither exists (i.e. not an EHI export).
+pub fn ehi_tables_dir(path: &Path) -> Option<PathBuf> {
+    if path.is_dir() && path.file_name().is_some_and(|n| n == "EHITables") {
+        return Some(path.to_path_buf());
+    }
+    let nested = path.join("EHITables");
+    nested.is_dir().then_some(nested)
+}
+
+/// A parsed EHI `.tsv`: a header→column-index map + the data rows. Columns are
+/// keyed by name so the mapping code reads against the schema docs.
+struct Tsv {
+    idx: HashMap<String, usize>,
+    rows: Vec<Vec<String>>,
+}
+
+impl Tsv {
+    /// Open `<tables>/<name>.tsv`. None if missing, unreadable, or headers-only.
+    fn open(tables: &Path, name: &str) -> Option<Tsv> {
+        let text = std::fs::read_to_string(tables.join(format!("{name}.tsv"))).ok()?;
+        let mut lines = text.lines();
+        let header = lines.next()?;
+        let idx: HashMap<String, usize> = header
+            .split('\t')
+            .enumerate()
+            .map(|(i, h)| (h.to_string(), i))
+            .collect();
+        let rows: Vec<Vec<String>> = lines
+            .filter(|l| !l.is_empty())
+            .map(|l| l.split('\t').map(str::to_string).collect())
+            .collect();
+        (!rows.is_empty()).then_some(Tsv { idx, rows })
+    }
+
+    /// Trimmed, non-empty value at (row, column-name). None for absent/blank cells.
+    fn get<'a>(&self, row: &'a [String], col: &str) -> Option<&'a str> {
+        let v = row.get(*self.idx.get(col)?)?.trim();
+        (!v.is_empty()).then_some(v)
+    }
+}
+
+/// Parse an Epic EHI timestamp (`M/D/YYYY` or `M/D/YYYY h:mm:ss AM`) → `Date`.
+fn ehi_date(s: &str) -> Option<Date> {
+    let d = s.split_whitespace().next()?;
+    let fmt = time::macros::format_description!("[month padding:none]/[day padding:none]/[year]");
+    Date::parse(d, fmt).ok()
+}
+
+fn oz_to_kg(oz: f64) -> f64 {
+    (oz * 0.028349523 * 1000.0).round() / 1000.0 // gram precision
+}
+fn in_to_cm(inch: f64) -> f64 {
+    (inch * 2.54 * 10.0).round() / 10.0 // 0.1 cm precision
+}
+
+fn map_immunizations(tables: &Path, out: &mut Vec<(String, CItem)>) {
+    let Some(t) = Tsv::open(tables, "IMMUNE") else { return };
+    for row in &t.rows {
+        let Some(vaccine) = t.get(row, "IMMUNZATN_ID_NAME") else { continue };
+        let ext_id = format!("ehi_immune_{}", t.get(row, "IMMUNE_ID").unwrap_or(vaccine));
+        // NDC is the only real machine code Epic exports for vaccines.
+        let ndc = t.get(row, "NDC_NUM_ID_NDC_CODE");
+        out.push((
+            ext_id,
+            CItem::Immunization {
+                vaccine: vaccine.to_string(),
+                code: ndc.map(str::to_string),
+                code_system: ndc.map(|_| "NDC".to_string()),
+                occurred: t.get(row, "IMMUNE_DATE").and_then(ehi_date),
+                dose_number: None, // IMMUNE carries dose *amount* (".5 mL"), not sequence
+                lot_number: t.get(row, "LOT").map(str::to_string),
+                site: t.get(row, "SITE_C_NAME").map(str::to_string),
+                route: t.get(row, "ROUTE_C_NAME").map(str::to_string),
+            },
+        ));
+    }
+}
+
+/// Growth vitals. The measured value lives in `V_EHI_FLO_MEAS_VALUE` (joined on
+/// `(FSD_ID, LINE)`), NOT in `IP_FLWSHT_MEAS`. We whitelist the real growth
+/// measures, assign canonical growth LOINCs, and convert to the metric units the
+/// CDC growth charts expect (kg / cm — see `handlers::subjects::growth`).
+fn map_vitals(tables: &Path, out: &mut Vec<(String, CItem)>) {
+    let (Some(meas), Some(vals)) =
+        (Tsv::open(tables, "IP_FLWSHT_MEAS"), Tsv::open(tables, "V_EHI_FLO_MEAS_VALUE"))
+    else {
+        return;
+    };
+    // (FSD_ID, LINE) → (raw value, source unit).
+    let mut value_of: HashMap<(String, String), (String, Option<String>)> = HashMap::new();
+    for row in &vals.rows {
+        if let (Some(fsd), Some(line), Some(v)) =
+            (vals.get(row, "FSD_ID"), vals.get(row, "LINE"), vals.get(row, "MEAS_VALUE_EXTERNAL"))
+        {
+            value_of.insert(
+                (fsd.to_string(), line.to_string()),
+                (v.to_string(), vals.get(row, "UNITS").map(str::to_string)),
+            );
+        }
+    }
+    for row in &meas.rows {
+        let Some(name) = meas.get(row, "FLO_MEAS_ID_FLO_MEAS_NAME") else { continue };
+        // Whitelist the real growth vitals; the ~40 other measure names are
+        // flowsheet-template formula rows (BMI, BSA, bariatric/frailty forms).
+        let (display, code, conv, out_unit): (&str, &str, Option<fn(f64) -> f64>, Option<&str>) =
+            match name.to_ascii_uppercase().as_str() {
+                "WEIGHT/SCALE" | "WEIGHT" => ("Body weight", "29463-7", Some(oz_to_kg), Some("kg")),
+                "HEIGHT" | "LENGTH" => ("Body length", "8302-2", Some(in_to_cm), Some("cm")),
+                "HEAD CIRCUMFERENCE" => ("Head circumference", "9843-4", Some(in_to_cm), Some("cm")),
+                "TEMPERATURE" => ("Body temperature", "8310-5", None, None),
+                _ => continue,
+            };
+        let (Some(fsd), Some(line)) = (meas.get(row, "FSD_ID"), meas.get(row, "LINE")) else {
+            continue;
+        };
+        let Some((raw, src_unit)) = value_of.get(&(fsd.to_string(), line.to_string())) else {
+            continue;
+        };
+        let Some(effective) = meas.get(row, "RECORDED_TIME").and_then(ehi_date) else { continue };
+        let parsed = raw.parse::<f64>().ok();
+        let value_num = match conv {
+            Some(f) => parsed.map(f),
+            None => parsed,
+        };
+        out.push((
+            format!("ehi_flo_{fsd}_{line}"),
+            CItem::Observation {
+                display: display.to_string(),
+                code: Some(code.to_string()),
+                code_system: Some("LOINC".to_string()),
+                value_num,
+                value_text: value_num.is_none().then(|| raw.clone()),
+                unit: out_unit.map(str::to_string).or_else(|| src_unit.clone()),
+                ref_low: None,
+                ref_high: None,
+                abnormal_flag: None,
+                panel_id: None,
+                effective,
+                category: "vital",
+            },
+        ));
+    }
+}
+
+fn map_problems(tables: &Path, out: &mut Vec<(String, CItem)>) {
+    let Some(t) = Tsv::open(tables, "PROBLEM_LIST") else { return };
+    for row in &t.rows {
+        let Some(name) = t.get(row, "DX_ID_DX_NAME").or_else(|| t.get(row, "DESCRIPTION")) else {
+            continue;
+        };
+        let name = name.to_string();
+        let ext_id = format!("ehi_problem_{}", t.get(row, "PROBLEM_LIST_ID").unwrap_or(name.as_str()));
+        let onset = t.get(row, "NOTED_DATE").and_then(ehi_date);
+        // Epic files delivery/birth in the problem list — a birth is a real-world
+        // event, not a chronic condition, so route it to an incident.
+        if is_birth_event(&name, None) {
+            out.push((ext_id, CItem::Incident { title: name, occurred: onset }));
+            continue;
+        }
+        out.push((
+            ext_id,
+            CItem::Condition {
+                name,
+                code: None,
+                code_system: None,
+                status: t.get(row, "PROBLEM_STATUS_C_NAME").map(|s| s.to_lowercase()),
+                onset,
+                resolved: t.get(row, "RESOLVED_DATE").and_then(ehi_date),
+            },
+        ));
+    }
+}
+
+/// Vaccine name tokens: `ORDER_MED` lists vaccine *administrations* as med orders
+/// that duplicate the authoritative `IMMUNE` rows, so we skip them here.
+fn looks_like_vaccine(name: &str) -> bool {
+    const TOKENS: &[&str] = &[
+        "vaccine", "rotateq", "rotavirus", "pentacel", "daptacel", "pediarix", "kinrix",
+        "quadracel", "dtap", "tdap", "vaxneuvance", "prevnar", "pneumococcal", "vaqta",
+        "havrix", "hepatitis a", "hepatitis b", "recombivax", "engerix", "varivax",
+        "varicella", "proquad", "measles", "mumps", "rubella", "influenza", "fluzone",
+        "flulaval", "fluarix", "m-m-r",
+    ];
+    let n = name.to_lowercase();
+    TOKENS.iter().any(|t| n.contains(t))
+}
+
+fn map_medications(tables: &Path, out: &mut Vec<(String, CItem)>) {
+    let Some(t) = Tsv::open(tables, "ORDER_MED") else { return };
+    for row in &t.rows {
+        let Some(name) = t
+            .get(row, "DISPLAY_NAME")
+            .or_else(|| t.get(row, "MEDICATION_ID_MEDICATION_NAME"))
+            .or_else(|| t.get(row, "DESCRIPTION"))
+        else {
+            continue;
+        };
+        if looks_like_vaccine(name) {
+            continue; // administered vaccine — captured via IMMUNE
+        }
+        let ext_id = format!("ehi_med_{}", t.get(row, "ORDER_MED_ID").unwrap_or(name));
+        let status = t.get(row, "ORDER_STATUS_C_NAME").map(|s| {
+            let s = s.to_lowercase();
+            if s.contains("complet") {
+                "completed"
+            } else if s.contains("discontin") || s.contains("stop") {
+                "stopped"
+            } else if s.contains("hold") {
+                "on_hold"
+            } else {
+                "active"
+            }
+            .to_string()
+        });
+        out.push((
+            ext_id,
+            CItem::Medication {
+                name: name.to_string(),
+                code: None,
+                code_system: None,
+                dose: t.get(row, "DOSAGE").or_else(|| t.get(row, "HV_DISCRETE_DOSE")).map(str::to_string),
+                route: t.get(row, "MED_ROUTE_C_NAME").map(str::to_string),
+                status,
+                started: t.get(row, "START_DATE").or_else(|| t.get(row, "ORDERING_DATE")).and_then(ehi_date),
+            },
+        ));
+    }
+}
+
+/// True if the export positively asserts No Known Allergies (`ALLERGY_FLAG` Y).
+fn ehi_nkda(tables: &Path) -> bool {
+    let Some(t) = Tsv::open(tables, "ALLERGY_FLAG") else { return false };
+    t.rows.iter().any(|r| t.get(r, "ALRGY_FLAG_YN") == Some("Y"))
+}
+
+fn collect_ehi(tables: &Path) -> (Vec<(String, CItem)>, Vec<String>) {
+    let mut out = Vec::new();
+    map_immunizations(tables, &mut out);
+    map_problems(tables, &mut out);
+    map_medications(tables, &mut out);
+    map_vitals(tables, &mut out);
+
+    // Surface categories present in the export but out of the v1 parser's scope,
+    // so partial coverage isn't mistaken for a clean, complete import.
+    let mut warnings = Vec::new();
+    if let Some(t) = Tsv::open(tables, "PAT_ENC_DX") {
+        warnings.push(format!(
+            "{} encounter diagnoses (PAT_ENC_DX) not imported — v1 maps the problem list only \
+             (this can include acute events, e.g. a fracture)",
+            t.rows.len()
+        ));
+    }
+    if let Some(t) = Tsv::open(tables, "HNO_INFO") {
+        warnings.push(format!(
+            "{} clinical notes (RTF) not imported — v1 imports structured data only",
+            t.rows.len()
+        ));
+    }
+    if Tsv::open(tables, "ORDER_RESULTS").is_none() {
+        warnings.push(
+            "no structured lab results in this export (ORDER_RESULTS empty) — any lab values are \
+             narrative-only in the RTF notes"
+                .to_string(),
+        );
+    }
+    if out.is_empty() {
+        warnings.push("no clinical rows mapped — check the EHITables path".to_string());
+    }
+    (out, warnings)
+}
+
+/// Import an Epic EHI export directory for `subject_id`, attributing rows to
+/// `source_id`. Commits atomically. Subject is caller-specified (never detected).
+pub async fn import_ehi(
+    pool: &PgPool,
+    subject_id: Uuid,
+    source_id: Uuid,
+    export_dir: &Path,
+) -> Result<Counts, sqlx::Error> {
+    let Some(tables) = ehi_tables_dir(export_dir) else {
+        let mut c = Counts::default();
+        c.warnings.push(format!("no EHITables/ directory under {}", export_dir.display()));
+        return Ok(c);
+    };
+    let (items, warnings) = collect_ehi(&tables);
+    let mut c = Counts { warnings, ..Default::default() };
+    let mut tx = pool.begin().await?;
+    for (ext_id, item) in items {
+        tally(&mut c, &item);
+        upsert_item(&mut tx, subject_id, source_id, &ext_id, item).await?;
+    }
+    // No Known Allergies is a positive assertion on the subject, not a row.
+    if ehi_nkda(&tables) {
+        sqlx::query("update subjects set no_known_allergies = true where id = $1")
+            .bind(subject_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(c)
+}
+
+/// Dry-run summary of what an Epic EHI export would import (no DB writes).
+pub fn preview_ehi(export_dir: &Path) -> Preview {
+    let Some(tables) = ehi_tables_dir(export_dir) else {
+        let mut p = Preview::default();
+        p.warnings.push(format!("no EHITables/ directory under {}", export_dir.display()));
+        return p;
+    };
+    let (items, warnings) = collect_ehi(&tables);
+    let mut p = Preview { warnings, ..Default::default() };
+    for (_ext, item) in &items {
+        preview_push(&mut p, item);
+    }
+    if ehi_nkda(&tables) {
+        p.samples.push("allergy    NKDA — No Known Allergies asserted (sets subject flag)".to_string());
     }
     p
 }
