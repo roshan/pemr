@@ -33,34 +33,6 @@ pub struct SyncJob {
 /// expire in 24 h so it's triggered manually via the import form, not scheduled.
 static ALL_TASKS: &[TaskDef] = &[];
 
-/// A user-selectable sync source shown in the picker on `/settings/sync`.
-///
-/// To add a new sync: append a `SyncProvider` here, render its import form in a
-/// `views::sync::provider_form` match arm, and add its POST handler + route.
-pub struct SyncProvider {
-    /// URL-safe slug the picker passes back (`?provider=<key>`).
-    pub key: &'static str,
-    pub label: &'static str,
-    /// One-line description shown under the picker.
-    pub blurb: &'static str,
-}
-
-/// Sync sources we currently support. CDPH DVR is the only one for now (and the
-/// picker's default). Order is display order.
-pub static SYNC_PROVIDERS: &[SyncProvider] = &[SyncProvider {
-    key: "dvr",
-    label: "CDPH Digital Vaccination Record",
-    blurb: "Import immunizations from a myvaccinerecord.cdph.ca.gov link, or the page HTML if the link won't fetch.",
-}];
-
-/// The provider selected by default, and the fallback for an unknown key.
-pub const DEFAULT_PROVIDER: &str = "dvr";
-
-/// Looks up a provider by key; `None` if we don't support it.
-pub fn provider(key: &str) -> Option<&'static SyncProvider> {
-    SYNC_PROVIDERS.iter().find(|p| p.key == key)
-}
-
 pub async fn all_jobs(pool: &PgPool) -> Result<Vec<SyncJob>, sqlx::Error> {
     sqlx::query_as::<_, SyncJob>("select * from sync_jobs order by name")
         .fetch_all(pool)

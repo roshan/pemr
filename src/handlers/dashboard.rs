@@ -71,26 +71,8 @@ async fn clinical_snapshot(
         .bind(id)
         .fetch_one(pool)
         .await?;
-    let n = crate::subject_modules::snapshot_counts(pool, &s).await?;
-    let snap = ClinicalSnapshot {
-        subject_id: id,
-        problems: n.problems,
-        medications: n.medications,
-        allergies: n.allergies,
-        immunizations: n.immunizations,
-        vitals: n.vitals,
-        appointments: n.appointments,
-        vaccines_due: n.vaccines_due,
-    };
-    let has_any = snap.problems
-        + snap.medications
-        + snap.allergies
-        + snap.immunizations
-        + snap.vitals
-        + snap.appointments
-        > 0
-        || snap.vaccines_due > 0;
-    Ok(has_any.then_some(snap))
+    let counts = crate::subject_modules::snapshot_counts(pool, &s).await?;
+    Ok(counts.any().then(|| ClinicalSnapshot { subject_id: id, counts }))
 }
 
 pub async fn healthz() -> &'static str {
@@ -141,7 +123,7 @@ async fn timeline_render(
     let data = load_timeline(
         &state.pool,
         subject,
-        q.range.as_deref().unwrap_or("1y"),
+        q.range.as_deref().unwrap_or(dashboard::DEFAULT_RANGE),
         q.from.as_deref(),
         q.to.as_deref(),
     )
@@ -165,46 +147,23 @@ async fn timeline_render(
 
 /// Every dated clinical artifact for a subject (or all subjects), unioned into
 /// one event stream, sorted oldest-first. Shared by the windowed timeline and
-/// the per-point detail panel.
+/// the per-point detail panel. The union arms, hrefs, colours, and labels all
+/// come from the `timeline_kinds` registry — adding a timeline-visible entity
+/// is one entry there.
 async fn load_events(
     pool: &PgPool,
     subject: Option<Uuid>,
 ) -> Result<Vec<dashboard::TimelineEvent>, sqlx::Error> {
-    // Only incidents (events) carry an end date; the other artifacts are points,
-    // so they project `null::date` to keep the union column-compatible.
-    let rows = sqlx::query_as::<_, (Date, String, String, String, Uuid, Option<Date>)>(
-        "select occurred_at as d, 'incident' as kind, title as t, id::text as i, subject_id as s, ended_at as e
-           from incidents where occurred_at is not null and ($1::uuid is null or subject_id = $1)
-         union all
-         select occurred_at, 'record', title, id::text, subject_id, null::date
-           from records where occurred_at is not null and ($1::uuid is null or subject_id = $1)
-         union all
-         select onset_date, 'condition', name, id::text, subject_id, null::date
-           from conditions where onset_date is not null and ($1::uuid is null or subject_id = $1)
-         union all
-         select occurred_at, 'immunization', vaccine, id::text, subject_id, null::date
-           from immunizations where occurred_at is not null and ($1::uuid is null or subject_id = $1)
-         union all
-         select effective_on, 'observation', display, id::text, subject_id, null::date
-           from observations where ($1::uuid is null or subject_id = $1)
-         union all
-         select starts_at::date, 'appointment', title, id::text, subject_id, null::date
-           from appointments where ($1::uuid is null or subject_id = $1)
-         order by d asc",
-    )
-    .bind(subject)
-    .fetch_all(pool)
-    .await?;
+    let sql = crate::timeline_kinds::events_sql();
+    let rows = sqlx::query_as::<_, (Date, String, String, String, Uuid, Option<Date>)>(&sql)
+        .bind(subject)
+        .fetch_all(pool)
+        .await?;
 
     Ok(rows
         .into_iter()
         .map(|(date, kind, title, id, sid, end_date)| {
-            let href = match kind.as_str() {
-                "incident" => Some(format!("/incidents/{id}")),
-                "record" => Some(format!("/records/{id}")),
-                "appointment" => Some(format!("/appointments/{id}/edit")),
-                _ => Some(format!("/subjects/{sid}")),
-            };
+            let href = crate::timeline_kinds::get(&kind).map(|k| (k.href)(&id, sid));
             dashboard::TimelineEvent { date, kind, title, href, subject_id: sid, end_date }
         })
         .collect())
@@ -294,16 +253,14 @@ fn build_timeline_data(
     let (start, end, range_label) = match (from.and_then(parse_iso), to.and_then(parse_iso)) {
         (Some(a), Some(b)) if b > a => (a, b, String::new()),
         _ => {
-            let r = match range {
-                "3m" | "1y" | "5y" | "all" => range,
-                _ => "1y",
-            };
-            let span = match r {
-                "3m" => 91,
-                "1y" => 365,
-                "5y" => 1826,
-                _ => (max_d - min_d).whole_days().max(1),
-            };
+            let &(r, _, days) = dashboard::TIMELINE_RANGES
+                .iter()
+                .find(|(k, ..)| *k == range)
+                .or_else(|| {
+                    dashboard::TIMELINE_RANGES.iter().find(|(k, ..)| *k == dashboard::DEFAULT_RANGE)
+                })
+                .expect("DEFAULT_RANGE is in TIMELINE_RANGES");
+            let span = days.unwrap_or_else(|| (max_d - min_d).whole_days().max(1));
             let start = max_d
                 .checked_sub(Duration::days(span))
                 .filter(|s| *s > min_d)
@@ -418,13 +375,12 @@ fn timeline_ticks(start: Date, end: Date) -> Vec<(f64, String)> {
     out
 }
 
-/// The dot colour follows the highest-priority kind present in the bucket.
+/// The dot colour follows the highest-priority kind present in the bucket
+/// (priority = `timeline_kinds` registry order).
 fn primary_kind(events: &[dashboard::TimelineEvent]) -> String {
-    const ORDER: [&str; 6] =
-        ["incident", "appointment", "record", "condition", "immunization", "observation"];
-    for k in ORDER {
-        if events.iter().any(|e| e.kind == k) {
-            return k.to_string();
+    for k in crate::timeline_kinds::KINDS {
+        if events.iter().any(|e| e.kind == k.key) {
+            return k.key.to_string();
         }
     }
     events.first().map(|e| e.kind.clone()).unwrap_or_default()

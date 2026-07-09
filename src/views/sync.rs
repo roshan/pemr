@@ -2,7 +2,7 @@ use maud::{Markup, html};
 use time::OffsetDateTime;
 
 use crate::models::Subject;
-use crate::sync::{self, SyncJob};
+use crate::sync::SyncJob;
 use crate::views::components as c;
 
 /// The sync-run history table (import runs recorded in `sync_jobs`). Shared by
@@ -32,30 +32,9 @@ pub fn history_table(jobs: &[SyncJob]) -> Markup {
     }
 }
 
-/// The import form for the selected sync source. This is what the picker swaps
-/// into `#sync-form`, so it's also rendered directly on first page load. Owns the
-/// heading + blurb (from the registry) so every provider gets a consistent header.
-pub fn provider_form(
-    provider_key: &str,
-    subjects: &[Subject],
-    import_result: Option<(&str, &str)>,
-) -> Markup {
-    html! {
-        section class="mb-8" {
-            @if let Some(p) = sync::provider(provider_key) {
-                (c::section_heading(p.label))
-                p class="mb-4 text-sm text-muted" { (p.blurb) }
-            }
-            @match provider_key {
-                "dvr" => (dvr_form(subjects, import_result)),
-                _ => (c::alert_info("This sync source isn't supported yet.")),
-            }
-        }
-    }
-}
-
 /// CDPH Digital Vaccination Record import form (details + form). Rendered on the
-/// unified import page under its own heading.
+/// unified import page under its own heading (the `views::import::IMPORT_TYPES`
+/// registry's `dvr` entry).
 pub fn dvr_form(subjects: &[Subject], import_result: Option<(&str, &str)>) -> Markup {
     html! {
         div class="mb-4 space-y-2 text-sm text-muted" {

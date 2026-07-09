@@ -542,28 +542,14 @@ pub fn link_subtle(href: impl Render, label: impl Render) -> Markup {
 // inline `style` since it's dynamic; everything visual stays in classes here.
 // ---------------------------------------------------------------------------
 
-/// Per-event-kind dot colour (standard palette literals so the scanner sees them).
+/// Per-event-kind dot colour, from the `timeline_kinds` registry (the colour
+/// literals live there, still in Rust source, so the CSS scanner sees them).
 fn timeline_kind_color(kind: &str) -> &'static str {
-    match kind {
-        "incident" => "bg-rose-500",
-        "record" => "bg-indigo-500",
-        "condition" => "bg-amber-500",
-        "immunization" => "bg-emerald-500",
-        "appointment" => "bg-sky-500",
-        _ => "bg-slate-400", // observation / other
-    }
+    crate::timeline_kinds::color(kind)
 }
 
 pub fn timeline_kind_label(kind: &str) -> &'static str {
-    match kind {
-        "incident" => "Event",
-        "record" => "Record",
-        "condition" => "Condition",
-        "immunization" => "Immunization",
-        "appointment" => "Appointment",
-        "observation" => "Observation",
-        _ => "Event",
-    }
+    crate::timeline_kinds::label(kind)
 }
 
 /// Compact inline date input for the timeline window controls (not full-width

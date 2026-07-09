@@ -1,9 +1,9 @@
 //! The unified **Import** page: pick an *import type*, then fill in that method's
 //! form (htmx-swapped into `#import-form`, so the page stays one picker + one
 //! form rather than a growing stack). The run history persists below. Adding a
-//! new import method = one `IMPORT_TYPES` entry + one `type_form` arm.
-//! See `handlers::import` (page + picker + file upload) and `handlers::sync`
-//! (the CDPH portal import).
+//! new import method = one `IMPORT_TYPES` entry (its form fn owns the whole
+//! section). See `handlers::import` (page + picker + file upload) and
+//! `handlers::sync` (the CDPH portal import).
 
 use maud::{Markup, html};
 
@@ -21,27 +21,46 @@ pub enum Outcome {
     Committed(importer::Counts),
 }
 
-/// Import methods shown in the picker. Keep this the single source of truth —
-/// add a `(key, label)` here and a matching `type_form` arm to extend.
-pub const IMPORT_TYPES: &[(&str, &str)] = &[
-    ("ehi", "Epic EHI export (file upload)"),
-    ("dvr", "CDPH Digital Vaccination Record"),
-];
-pub const DEFAULT_TYPE: &str = "ehi";
-
-pub fn is_type(key: &str) -> bool {
-    IMPORT_TYPES.iter().any(|(k, _)| *k == key)
+/// Everything a method's form might need to render itself (and its submit
+/// result). Each form fn picks what it uses.
+pub struct FormCtx<'a> {
+    pub subjects: &'a [Subject],
+    /// Prefill for the EHI source field.
+    pub source_value: &'a str,
+    /// Result of a submitted EHI upload.
+    pub ehi: Option<Outcome>,
+    /// Result of a submitted CDPH import: (status, message).
+    pub vaccine_result: Option<(&'a str, &'a str)>,
 }
 
-pub fn page(
-    nav: &Nav<'_>,
-    subjects: &[Subject],
-    jobs: &[SyncJob],
-    selected_type: &str,
-    source_value: &str,
-    ehi: Option<Outcome>,
-    vaccine_result: Option<(&str, &str)>,
-) -> Markup {
+pub struct ImportType {
+    /// URL-safe key the picker passes back (`?import_type=<key>`).
+    pub key: &'static str,
+    /// The picker option's label.
+    pub label: &'static str,
+    /// Renders this method's whole section (heading, blurb, result, form) —
+    /// what the picker swaps into `#import-form`.
+    pub form: fn(&FormCtx) -> Markup,
+}
+
+/// Import methods, in picker order (first entry = the default). The single
+/// source of truth: each entry owns its form, so adding a method is one entry
+/// here (plus its POST handler). Mirrors the `subject_modules` registry.
+pub const IMPORT_TYPES: &[ImportType] = &[
+    ImportType { key: "ehi", label: "Epic EHI export (file upload)", form: ehi_section },
+    ImportType { key: "dvr", label: "CDPH Digital Vaccination Record", form: dvr_section },
+];
+
+/// The picker's default (and the fallback for an unknown key).
+pub fn default_type() -> &'static str {
+    IMPORT_TYPES[0].key
+}
+
+pub fn get(key: &str) -> Option<&'static ImportType> {
+    IMPORT_TYPES.iter().find(|t| t.key == key)
+}
+
+pub fn page(nav: &Nav<'_>, jobs: &[SyncJob], selected_type: &str, ctx: &FormCtx<'_>) -> Markup {
     let body = html! {
         (c::page_title("Import"))
         p class="mb-6 max-w-xl text-sm text-muted" {
@@ -53,8 +72,8 @@ pub fn page(
                 "Import type",
                 "Choose the source. More types appear here as we add them.",
                 c::hx_select("import_type", "/settings/import/form", "#import-form", html! {
-                    @for &(k, label) in IMPORT_TYPES {
-                        (c::select_option(k, label, k == selected_type))
+                    @for t in IMPORT_TYPES {
+                        (c::select_option(t.key, t.label, t.key == selected_type))
                     }
                 }),
             ))
@@ -62,7 +81,7 @@ pub fn page(
 
         // Swapped in place by the picker; the picker itself lives outside so it persists.
         div id="import-form" {
-            (type_form(selected_type, subjects, source_value, ehi, vaccine_result))
+            (type_form(selected_type, ctx))
         }
 
         (sync::history_table(jobs))
@@ -72,35 +91,36 @@ pub fn page(
 
 /// The form for the selected import type — what the picker swaps into
 /// `#import-form`, and what a submit re-renders (carrying its result).
-pub fn type_form(
-    key: &str,
-    subjects: &[Subject],
-    source_value: &str,
-    ehi: Option<Outcome>,
-    vaccine_result: Option<(&str, &str)>,
-) -> Markup {
-    match key {
-        "ehi" => html! {
-            (c::section_heading("Epic EHI export"))
-            div class="mb-4 mt-1 max-w-xl space-y-2 text-sm text-muted" {
-                p {
-                    "The \"Requested Records\" / \"Computer-readable EHI export\" zip from a MyChart records request. "
-                    strong class="text-ink" { "Preview" }
-                    " to see what will import, then "
-                    strong class="text-ink" { "Import" }
-                    ". Re-importing the same export is safe (idempotent)."
-                }
+pub fn type_form(key: &str, ctx: &FormCtx<'_>) -> Markup {
+    match get(key) {
+        Some(t) => (t.form)(ctx),
+        None => c::alert_info("Unsupported import type."),
+    }
+}
+
+fn ehi_section(ctx: &FormCtx<'_>) -> Markup {
+    html! {
+        (c::section_heading("Epic EHI export"))
+        div class="mb-4 mt-1 max-w-xl space-y-2 text-sm text-muted" {
+            p {
+                "The \"Requested Records\" / \"Computer-readable EHI export\" zip from a MyChart records request. "
+                strong class="text-ink" { "Preview" }
+                " to see what will import, then "
+                strong class="text-ink" { "Import" }
+                ". Re-importing the same export is safe (idempotent)."
             }
-            @if let Some(o) = &ehi {
-                div class="mb-4 max-w-xl" { (outcome_view(o)) }
-            }
-            (ehi_form(subjects, source_value))
-        },
-        "dvr" => html! {
-            (c::section_heading("CDPH Digital Vaccination Record"))
-            div class="mt-1" { (sync::dvr_form(subjects, vaccine_result)) }
-        },
-        _ => c::alert_info("Unsupported import type."),
+        }
+        @if let Some(o) = &ctx.ehi {
+            div class="mb-4 max-w-xl" { (outcome_view(o)) }
+        }
+        (ehi_form(ctx.subjects, ctx.source_value))
+    }
+}
+
+fn dvr_section(ctx: &FormCtx<'_>) -> Markup {
+    html! {
+        (c::section_heading("CDPH Digital Vaccination Record"))
+        div class="mt-1" { (sync::dvr_form(ctx.subjects, ctx.vaccine_result)) }
     }
 }
 

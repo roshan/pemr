@@ -1,5 +1,5 @@
 use axum::Form;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Redirect, Response};
 use maud::Markup;
 use serde::Deserialize;
@@ -13,7 +13,6 @@ use crate::sync;
 use crate::viewer::ViewerContext;
 use crate::views::import as import_view;
 use crate::views::layout::Nav;
-use crate::views::sync as views;
 
 fn import_nav<'a>(subjects: &'a [Subject], viewer: &'a ViewerContext) -> Nav<'a> {
     Nav {
@@ -29,27 +28,6 @@ fn import_nav<'a>(subjects: &'a [Subject], viewer: &'a ViewerContext) -> Nav<'a>
 /// so existing links/bookmarks still land somewhere sensible.
 pub async fn page() -> Redirect {
     Redirect::to("/settings/import")
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ProviderQuery {
-    #[serde(default)]
-    pub provider: String,
-}
-
-/// Returns the import form for the picked sync source, swapped into `#sync-form`
-/// by the picker. Falls back to the default provider for an unknown key.
-pub async fn provider_form(
-    State(state): State<AppState>,
-    Query(query): Query<ProviderQuery>,
-) -> AppResult<Markup> {
-    let subjects = load_subjects(&state.pool).await?;
-    let key = if sync::provider(&query.provider).is_some() {
-        query.provider.as_str()
-    } else {
-        sync::DEFAULT_PROVIDER
-    };
-    Ok(views::provider_form(key, &subjects, None))
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,15 +51,11 @@ pub async fn import_vaccines(
             let subjects = load_subjects(&state.pool).await?;
             let jobs = sync::all_jobs(&state.pool).await?;
             let nav = import_nav(&subjects, &viewer);
-            return Ok(import_view::page(
-                &nav,
-                &subjects,
-                &jobs,
-                "dvr",
-                import_handler::DEFAULT_SOURCE,
-                None,
-                Some(("error", "Pick a subject before importing.")),
-            ));
+            let ctx = import_view::FormCtx {
+                vaccine_result: Some(("error", "Pick a subject before importing.")),
+                ..import_handler::form_ctx(&subjects)
+            };
+            return Ok(import_view::page(&nav, &jobs, "dvr", &ctx));
         }
     };
 
@@ -108,15 +82,11 @@ pub async fn import_vaccines(
     let subjects = load_subjects(&state.pool).await?;
     let jobs = sync::all_jobs(&state.pool).await?;
     let nav = import_nav(&subjects, &viewer);
-    Ok(import_view::page(
-        &nav,
-        &subjects,
-        &jobs,
-        "dvr",
-        import_handler::DEFAULT_SOURCE,
-        None,
-        Some((status, &message)),
-    ))
+    let ctx = import_view::FormCtx {
+        vaccine_result: Some((status, &message)),
+        ..import_handler::form_ctx(&subjects)
+    };
+    Ok(import_view::page(&nav, &jobs, "dvr", &ctx))
 }
 
 pub async fn run_task(

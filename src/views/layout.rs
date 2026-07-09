@@ -25,6 +25,18 @@ fn htmx_ver() -> &'static str {
     V.get_or_init(|| asset_ver("static/vendor/htmx.min.js"))
 }
 
+/// Top-bar sections: (href, label), in display order.
+const NAV_ITEMS: &[(&str, &str)] = &[
+    ("/incidents", "Events"),
+    ("/records", "Records"),
+    ("/sources", "Sources"),
+    ("/providers", "Providers"),
+    ("/insurance", "Insurance"),
+    ("/subjects", "Subjects"),
+    ("/settings/api-keys", "API keys"),
+    ("/settings/import", "Import"),
+];
+
 pub struct Nav<'a> {
     pub title: &'a str,
     pub current_path: &'a str,
@@ -65,14 +77,9 @@ fn top_bar(nav: &Nav<'_>) -> Markup {
                 }
                 nav class="flex items-center gap-1 text-sm" {
                     (subject_switcher(nav))
-                    (nav_link("/incidents", "Events", nav.current_path))
-                    (nav_link("/records",   "Records",   nav.current_path))
-                    (nav_link("/sources",   "Sources",   nav.current_path))
-                    (nav_link("/providers", "Providers", nav.current_path))
-                    (nav_link("/insurance", "Insurance", nav.current_path))
-                    (nav_link("/subjects",  "Subjects",  nav.current_path))
-                    (nav_link("/settings/api-keys", "API keys", nav.current_path))
-                    (nav_link("/settings/import", "Import", nav.current_path))
+                    @for (href, label) in NAV_ITEMS {
+                        (nav_link(href, label, nav.current_path))
+                    }
                 }
             }
             @if let Some(email) = &nav.viewer.email {
@@ -134,17 +141,16 @@ fn current_subject_label(nav: &Nav<'_>) -> Option<String> {
         .map(|s| format!("{} {}", s.given_name, s.family_name))
 }
 
-/// Build a URL for `section` (one of "/", "/records", "/incidents",
-/// "/timeline") scoped to a subject. `None` means the all-subjects view
-/// (e.g. `/records`); `Some(id)` returns the path-style version
-/// (e.g. `/subjects/<id>/records`). Used by the subject switcher and by
-/// every "View all"/"New …" link in the per-section views.
+/// Build a URL for `section` ("/" or a `subject_pages::scoped_sections` entry)
+/// scoped to a subject. `None` means the all-subjects view (e.g. `/records`);
+/// `Some(id)` returns the path-style version (e.g. `/subjects/<id>/records`).
+/// Used by the subject switcher and by every "View all"/"New …" link in the
+/// per-section views. Which sections scope comes from the same registry that
+/// wires their routes, so this can't drift from `main`.
 pub fn subject_scoped_url(section: &str, subject: Option<Uuid>) -> String {
     let rel = match section {
         "/" | "/dashboard" | "" => "",
-        "/records" => "/records",
-        "/incidents" => "/incidents",
-        "/timeline" => "/timeline",
+        s if crate::subject_pages::is_scoped_section(s) => s,
         // Sections we don't subject-scope — return as-is.
         _ => return section.to_string(),
     };
@@ -186,6 +192,32 @@ pub fn render_date_range(
             format!("{} – {}", render_date(start, start_precision), render_date(Some(e), end_precision))
         }
         _ => render_date(start, start_precision),
+    }
+}
+
+/// Standalone 404 page. Rendered from the app-level fallback, which runs
+/// outside the viewer middleware — so no `Nav`/`ViewerContext` here, just a
+/// styled page with a way home.
+pub fn not_found_page(path: &str) -> Markup {
+    html! {
+        (DOCTYPE)
+        html lang="en" {
+            head {
+                meta charset="utf-8";
+                meta name="viewport" content="width=device-width, initial-scale=1";
+                title { "Not found — personal EMR" }
+                link rel="stylesheet" href={ "/static/vendor/app.css?v=" (css_ver()) };
+            }
+            body class="min-h-screen text-ink antialiased" {
+                main class="mx-auto max-w-5xl px-4 py-16" {
+                    h1 class="text-2xl font-semibold tracking-tight text-ink mb-2" { "Page not found" }
+                    p class="text-sm text-muted mb-4" {
+                        code { (path) } " doesn't exist."
+                    }
+                    a href="/" class="text-brand hover:underline" { "← Back to the dashboard" }
+                }
+            }
+        }
     }
 }
 

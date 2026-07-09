@@ -21,11 +21,16 @@ use crate::views::layout::Nav;
 
 pub(crate) const DEFAULT_SOURCE: &str = "MyChart EHI export";
 
+/// The default form context: subjects + the EHI source prefill, no results yet.
+pub(crate) fn form_ctx<'a>(subjects: &'a [Subject]) -> views::FormCtx<'a> {
+    views::FormCtx { subjects, source_value: DEFAULT_SOURCE, ehi: None, vaccine_result: None }
+}
+
 pub async fn page(State(state): State<AppState>, viewer: ViewerContext) -> AppResult<Markup> {
     let subjects = load_subjects(&state.pool).await?;
     let jobs = crate::sync::all_jobs(&state.pool).await?;
     let nav = nav(&subjects, &viewer);
-    Ok(views::page(&nav, &subjects, &jobs, views::DEFAULT_TYPE, DEFAULT_SOURCE, None, None))
+    Ok(views::page(&nav, &jobs, views::default_type(), &form_ctx(&subjects)))
 }
 
 #[derive(Deserialize)]
@@ -37,8 +42,12 @@ pub struct TypeQuery {
 /// The import-type picker swaps in the selected method's form (`#import-form`).
 pub async fn form(State(state): State<AppState>, Query(q): Query<TypeQuery>) -> AppResult<Markup> {
     let subjects = load_subjects(&state.pool).await?;
-    let key = if views::is_type(&q.import_type) { q.import_type.as_str() } else { views::DEFAULT_TYPE };
-    Ok(views::type_form(key, &subjects, DEFAULT_SOURCE, None, None))
+    let key = if views::get(&q.import_type).is_some() {
+        q.import_type.as_str()
+    } else {
+        views::default_type()
+    };
+    Ok(views::type_form(key, &form_ctx(&subjects)))
 }
 
 pub async fn upload(
@@ -72,7 +81,15 @@ pub async fn upload(
     let subjects = load_subjects(&state.pool).await?;
     let jobs = crate::sync::all_jobs(&state.pool).await?;
     let nav = nav(&subjects, &viewer);
-    let render = |o: Outcome| views::page(&nav, &subjects, &jobs, "ehi", source_value, Some(o), None);
+    let render = |o: Outcome| {
+        let ctx = views::FormCtx {
+            subjects: &subjects,
+            source_value,
+            ehi: Some(o),
+            vaccine_result: None,
+        };
+        views::page(&nav, &jobs, "ehi", &ctx)
+    };
 
     // Subject is required — never guessed (the EHI export names the patient only
     // by an internal id).

@@ -1,8 +1,5 @@
-// The `/api/v1` discovery doc is one big `json!{…}` literal; each endpoint row
-// deepens the macro's recursive expansion, so the default limit (128) is too low.
-#![recursion_limit = "256"]
-
 mod api_auth;
+mod api_routes;
 mod config;
 mod db;
 mod dicom_import;
@@ -18,6 +15,7 @@ mod peds;
 mod subject_modules;
 mod subject_pages;
 mod sync;
+mod timeline_kinds;
 mod viewer;
 mod views;
 
@@ -38,6 +36,24 @@ use tower_http::trace::TraceLayer;
 use crate::config::Config;
 use crate::handlers::AppState;
 use crate::viewer::ViewerConfig;
+
+/// Explicit 404 for unmatched paths. Without this, axum's default fallback
+/// inherits the API router's auth layer when the routers merge, and every
+/// typo'd URL turns into a bare 401. `/api/v1/*` misses keep the API's JSON
+/// error shape; everything else gets a small HTML page. (CF Access has
+/// already authenticated the caller at the edge either way.)
+async fn not_found(uri: axum::http::Uri) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if uri.path().starts_with("/api/v1") {
+        handlers::api::ApiError::not_found().into_response()
+    } else {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            views::layout::not_found_page(uri.path()),
+        )
+            .into_response()
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -142,11 +158,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // subjects
         .route("/subjects", get(handlers::subjects::list).post(handlers::subjects::create))
         .route("/subjects/{id}", get(handlers::subjects::detail))
-        // per-subject path-style scopes (the button-backed pages live in
-        // `subject_pages`; these are the extra scoped views)
-        .route("/subjects/{id}/records", get(handlers::records::list_for_subject))
-        .route("/subjects/{id}/incidents", get(handlers::incidents::list_for_subject))
-        .route("/subjects/{id}/timeline", get(handlers::dashboard::timeline_for_subject))
+        // per-subject path-style scopes (`/subjects/{id}/records`, …) come from
+        // `subject_pages::scoped_sections` — the same registry
+        // `layout::subject_scoped_url` consults, so the switcher's URLs and the
+        // routes never drift. Registered by `subject_pages::register` above.
         // clinical entry (PEMR-3 UI)
         .route("/subjects/{id}/clinical", get(handlers::clinical::page))
         .route("/subjects/{id}/allergies", post(handlers::clinical::add_allergy))
@@ -208,7 +223,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             post(handlers::settings::revoke_api_key),
         )
         .route("/settings/sync", get(handlers::sync::page))
-        .route("/settings/sync/form", get(handlers::sync::provider_form))
         .route(
             "/settings/sync/vaccine-import",
             post(handlers::sync::import_vaccines),
@@ -228,120 +242,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ));
 
     // The API router. Gated by Bearer tokens from the `api_keys` table —
-    // see `api_auth::middleware`. Errors are JSON, not HTML.
-    let api = Router::<handlers::AppState>::new()
-        .route("/api/v1", get(handlers::api::root::index))
-        .route("/api/v1/me", get(handlers::api::me::me))
-        .route("/api/v1/subjects", get(handlers::api::subjects::list))
-        .route("/api/v1/subjects/{id}", get(handlers::api::subjects::detail))
-        .route("/api/v1/incidents", get(handlers::api::incidents::list))
-        .route("/api/v1/incidents/{id}", get(handlers::api::incidents::detail))
-        .route("/api/v1/records", get(handlers::api::records::list))
-        .route("/api/v1/records/{id}", get(handlers::api::records::detail))
-        .route("/api/v1/records/{id}/file", get(handlers::api::records::file))
-        .route("/api/v1/records/{id}/preview", get(handlers::api::records::preview))
-        .route("/api/v1/records/{id}/thumbnail", get(handlers::api::records::thumbnail))
-        .route(
-            "/api/v1/sources",
-            get(handlers::api::sources::list).post(handlers::api::sources::create),
-        )
-        .route("/api/v1/sources/{id}", get(handlers::api::sources::detail))
-        // Clinical read/write surface. POST = idempotent upsert (see api::mod);
-        // GET list accepts ?subject=&limit=&offset=. Reference data (providers)
-        // is not subject-scoped. Join tables have no detail-by-id route.
-        .route(
-            "/api/v1/providers",
-            get(handlers::api::providers::list).post(handlers::api::providers::create),
-        )
-        .route("/api/v1/providers/{id}", get(handlers::api::providers::detail))
-        .route(
-            "/api/v1/appointments",
-            get(handlers::api::appointments::list).post(handlers::api::appointments::create),
-        )
-        .route(
-            "/api/v1/appointments/{id}",
-            get(handlers::api::appointments::detail),
-        )
-        .route(
-            "/api/v1/allergies",
-            get(handlers::api::allergies::list).post(handlers::api::allergies::create),
-        )
-        .route("/api/v1/allergies/{id}", get(handlers::api::allergies::detail))
-        .route(
-            "/api/v1/medications",
-            get(handlers::api::medications::list).post(handlers::api::medications::create),
-        )
-        .route(
-            "/api/v1/medications/{id}",
-            get(handlers::api::medications::detail),
-        )
-        .route(
-            "/api/v1/conditions",
-            get(handlers::api::conditions::list).post(handlers::api::conditions::create),
-        )
-        .route(
-            "/api/v1/conditions/{id}",
-            get(handlers::api::conditions::detail),
-        )
-        .route(
-            "/api/v1/immunizations",
-            get(handlers::api::immunizations::list).post(handlers::api::immunizations::create),
-        )
-        .route(
-            "/api/v1/immunizations/{id}",
-            get(handlers::api::immunizations::detail),
-        )
-        .route(
-            "/api/v1/observations",
-            get(handlers::api::observations::list).post(handlers::api::observations::create),
-        )
-        .route(
-            "/api/v1/observations/{id}",
-            get(handlers::api::observations::detail),
-        )
-        .route(
-            "/api/v1/care-reminders",
-            get(handlers::api::care_reminders::list).post(handlers::api::care_reminders::create),
-        )
-        .route(
-            "/api/v1/care-reminders/{id}",
-            get(handlers::api::care_reminders::detail),
-        )
-        .route(
-            "/api/v1/subject-identifiers",
-            get(handlers::api::subject_identifiers::list)
-                .post(handlers::api::subject_identifiers::create),
-        )
-        .route(
-            "/api/v1/subject-identifiers/{id}",
-            get(handlers::api::subject_identifiers::detail),
-        )
-        .route(
-            "/api/v1/subject-providers",
-            get(handlers::api::subject_providers::list)
-                .post(handlers::api::subject_providers::create),
-        )
-        .route(
-            "/api/v1/subject-relationships",
-            get(handlers::api::subject_relationships::list)
-                .post(handlers::api::subject_relationships::create),
-        )
-        .route(
-            "/api/v1/insurance-plans",
-            get(handlers::api::insurance_plans::list).post(handlers::api::insurance_plans::create),
-        )
-        .route(
-            "/api/v1/insurance-plans/{id}",
-            get(handlers::api::insurance_plans::detail),
-        )
-        .route(
-            "/api/v1/subject-insurance",
-            get(handlers::api::subject_insurance::list)
-                .post(handlers::api::subject_insurance::create),
-        )
-        .route("/api/v1/search", get(handlers::api::search::search))
-        .route("/api/v1/import/fhir", post(handlers::api::import::fhir))
-        .route("/api/v1/import/ccda", post(handlers::api::import::ccda))
+    // see `api_auth::middleware`. Errors are JSON, not HTML. Every endpoint
+    // (route + its discovery-doc row) lives in the `api_routes` registry.
+    let api = api_routes::register(Router::<handlers::AppState>::new())
         .layer(axum::middleware::from_fn_with_state(
             pool.clone(),
             api_auth::middleware,
@@ -350,6 +253,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .merge(ui)
         .merge(api)
+        .fallback(not_found)
         .nest_service("/static", ServeDir::new("static"))
         .with_state(state)
         .layer(DefaultBodyLimit::max(1024 * 1024 * 1024))

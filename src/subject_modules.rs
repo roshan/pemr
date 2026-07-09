@@ -415,6 +415,20 @@ pub struct SnapshotCounts {
     pub vaccines_due: usize,
 }
 
+impl SnapshotCounts {
+    /// Anything worth surfacing on the home dashboard?
+    pub fn any(&self) -> bool {
+        self.problems
+            + self.medications
+            + self.allergies
+            + self.immunizations
+            + self.vitals
+            + self.appointments
+            > 0
+            || self.vaccines_due > 0
+    }
+}
+
 pub async fn snapshot_counts(pool: &PgPool, s: &Subject) -> Result<SnapshotCounts, sqlx::Error> {
     async fn n(pool: &PgPool, sql: &str, id: uuid::Uuid) -> Result<usize, sqlx::Error> {
         let c: i64 = sqlx::query_scalar(sql).bind(id).fetch_one(pool).await?;

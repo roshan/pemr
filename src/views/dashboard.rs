@@ -62,20 +62,25 @@ pub struct DashboardData<'a> {
     pub clinical: Option<ClinicalSnapshot>,
 }
 
-/// Counts behind the home-dashboard clinical snapshot. Built by the handler from
-/// the same `ClinicalSummary` load the subject chart uses, so the two never
-/// disagree on what counts as active / due.
+/// The home-dashboard clinical snapshot: the subject in scope plus the counts
+/// straight from `subject_modules::snapshot_counts` (the same filters the
+/// chart's modules use, so the two never disagree on what counts as active /
+/// due). No field-by-field copying — the counts struct rides along whole.
 pub struct ClinicalSnapshot {
     pub subject_id: Uuid,
-    pub problems: usize,
-    pub medications: usize,
-    pub allergies: usize,
-    pub immunizations: usize,
-    pub vitals: usize,
-    pub appointments: usize,
-    /// Vaccines due or overdue (forecast, minors only) → the "N due" tile badge.
-    pub vaccines_due: usize,
+    pub counts: crate::subject_modules::SnapshotCounts,
 }
+
+/// Timeline window presets: (query key, tab label, window in days —
+/// `None` = the full data range). One entry drives both the tab row and the
+/// handler's preset lookup, in display order.
+pub const TIMELINE_RANGES: &[(&str, &str, Option<i64>)] = &[
+    ("3m", "3M", Some(91)),
+    ("1y", "1Y", Some(365)),
+    ("5y", "5Y", Some(1826)),
+    ("all", "All", None),
+];
+pub const DEFAULT_RANGE: &str = "1y";
 
 const DASHBOARD_TIMELINE_LIMIT: usize = 12;
 
@@ -228,6 +233,7 @@ fn record_card(rec: &Record, subjects: &[Subject]) -> Markup {
 /// Each tile links to the best detail view; the full chart is one click away.
 fn clinical_snapshot(s: &ClinicalSnapshot) -> Markup {
     let sid = s.subject_id;
+    let n = &s.counts;
     let chart = format!("/subjects/{sid}");
     let imm = format!("/subjects/{sid}/immunizations");
     let appts = format!("/subjects/{sid}/appointments");
@@ -238,14 +244,14 @@ fn clinical_snapshot(s: &ClinicalSnapshot) -> Markup {
                 (c::link_subtle(&chart, "Open chart →"))
             }
             (c::stat_grid(html! {
-                (c::stat_tile(&chart, s.problems, "Problems", s.problems > 0, html! {}))
-                (c::stat_tile(&chart, s.medications, "Medications", s.medications > 0, html! {}))
-                (c::stat_tile(&chart, s.allergies, "Allergies", s.allergies > 0, html! {}))
-                (c::stat_tile(&imm, s.immunizations, "Immunizations", s.immunizations > 0, html! {
-                    @if s.vaccines_due > 0 { (c::badge_warn(format!("{} due", s.vaccines_due))) }
+                (c::stat_tile(&chart, n.problems, "Problems", n.problems > 0, html! {}))
+                (c::stat_tile(&chart, n.medications, "Medications", n.medications > 0, html! {}))
+                (c::stat_tile(&chart, n.allergies, "Allergies", n.allergies > 0, html! {}))
+                (c::stat_tile(&imm, n.immunizations, "Immunizations", n.immunizations > 0, html! {
+                    @if n.vaccines_due > 0 { (c::badge_warn(format!("{} due", n.vaccines_due))) }
                 }))
-                (c::stat_tile(&chart, s.vitals, "Vitals & labs", s.vitals > 0, html! {}))
-                (c::stat_tile(&appts, s.appointments, "Appointments", s.appointments > 0, html! {}))
+                (c::stat_tile(&chart, n.vitals, "Vitals & labs", n.vitals > 0, html! {}))
+                (c::stat_tile(&appts, n.appointments, "Appointments", n.appointments > 0, html! {}))
             }))
         }
     }
@@ -302,11 +308,9 @@ fn incidents_timeline(
     }
 }
 
-const TIMELINE_KINDS: [&str; 6] =
-    ["incident", "record", "condition", "immunization", "observation", "appointment"];
-
 /// The reusable timeline body (legend + axis), shared by the full `/timeline`
-/// page and the subject chart. `tabs` shows the duration selector.
+/// page and the subject chart. `tabs` shows the duration selector. Tabs come
+/// from `TIMELINE_RANGES`; the legend from the `timeline_kinds` registry.
 pub fn timeline_widget(data: &TimelineData, tabs: bool) -> Markup {
     let base = match data.subject {
         Some(id) => format!("/timeline?subject={id}"),
@@ -316,10 +320,9 @@ pub fn timeline_widget(data: &TimelineData, tabs: bool) -> Markup {
     html! {
         @if tabs {
             div class="flex flex-wrap items-center gap-2 mb-3" {
-                (c::timeline_tab(&rurl("3m"), "3M", data.range == "3m"))
-                (c::timeline_tab(&rurl("1y"), "1Y", data.range == "1y"))
-                (c::timeline_tab(&rurl("5y"), "5Y", data.range == "5y"))
-                (c::timeline_tab(&rurl("all"), "All", data.range == "all"))
+                @for &(key, label, _) in TIMELINE_RANGES {
+                    (c::timeline_tab(&rurl(key), label, data.range == key))
+                }
                 span class="text-muted px-1" { "·" }
                 form hx-get="/timeline" hx-target="#tl-inner" hx-swap="outerHTML"
                      hx-trigger="change" class="flex items-center gap-1" {
@@ -331,7 +334,7 @@ pub fn timeline_widget(data: &TimelineData, tabs: bool) -> Markup {
             }
         }
         div class="flex flex-wrap gap-3 mb-2" {
-            @for k in TIMELINE_KINDS { (c::timeline_legend_item(k)) }
+            @for k in crate::timeline_kinds::KINDS { (c::timeline_legend_item(k.key)) }
         }
         @if data.start.is_empty() {
             // No events at all for this subject — there's no time axis to draw.

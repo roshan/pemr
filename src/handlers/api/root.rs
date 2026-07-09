@@ -4,8 +4,22 @@ use serde_json::{Value, json};
 use crate::api_auth::ApiKeyContext;
 use crate::models;
 
-/// `GET /api/v1` — discovery doc for the assistant agent.
+/// `GET /api/v1` — discovery doc for the assistant agent. The endpoint rows
+/// come from the `api_routes` registry — the same one `main.rs` wires the
+/// routes from — so the doc can't drift from the actual surface.
 pub async fn index(_ctx: ApiKeyContext) -> Json<Value> {
+    let endpoints: Vec<Value> = crate::api_routes::routes()
+        .iter()
+        .flat_map(|r| {
+            let path = r.doc_path.unwrap_or(r.path);
+            r.docs
+                .iter()
+                .map(move |(method, summary)| {
+                    json!({"method": method, "path": path, "summary": summary})
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
     Json(json!({
         "name": "personal-emr",
         "version": "v1",
@@ -17,61 +31,7 @@ pub async fn index(_ctx: ApiKeyContext) -> Json<Value> {
             inserts. Authenticate with `Authorization: Bearer <token>` from /settings/api-keys. \
             Errors are JSON: {\"error\": \"...\"} with the right status (400 bad input, \
             401 bad token, 404 missing, 409 conflict).",
-        "endpoints": [
-            {"method": "GET",  "path": "/api/v1",                          "summary": "this discovery document"},
-            {"method": "GET",  "path": "/api/v1/me",                       "summary": "which API key this request is authenticated as"},
-            {"method": "GET",  "path": "/api/v1/subjects",                 "summary": "list subjects (people)"},
-            {"method": "GET",  "path": "/api/v1/subjects/{id}",            "summary": "one subject"},
-            {"method": "GET",  "path": "/api/v1/incidents",               "summary": "list incidents (?subject=)"},
-            {"method": "GET",  "path": "/api/v1/incidents/{id}",          "summary": "one incident + linked records"},
-            {"method": "GET",  "path": "/api/v1/records",                 "summary": "list records (?subject=&kind=)"},
-            {"method": "GET",  "path": "/api/v1/records/{id}",            "summary": "one record (metadata)"},
-            {"method": "GET",  "path": "/api/v1/records/{id}/file",       "summary": "stream the original file bytes"},
-            {"method": "GET",  "path": "/api/v1/records/{id}/preview",    "summary": "stream the preview (DICOM → PNG)"},
-            {"method": "GET",  "path": "/api/v1/records/{id}/thumbnail",  "summary": "stream the thumbnail (webp)"},
-            {"method": "GET",  "path": "/api/v1/sources",                 "summary": "list sources (EMR portals, clinics)"},
-            {"method": "POST", "path": "/api/v1/sources",                 "summary": "create/update a source (clinic, portal); dedup on name"},
-            {"method": "GET",  "path": "/api/v1/sources/{id}",            "summary": "one source"},
-            {"method": "GET",  "path": "/api/v1/providers",               "summary": "list clinicians (reference data; not subject-scoped)"},
-            {"method": "POST", "path": "/api/v1/providers",               "summary": "upsert a clinician; dedup on npi, else (source_id, external_id)"},
-            {"method": "GET",  "path": "/api/v1/providers/{id}",          "summary": "one provider"},
-            {"method": "GET",  "path": "/api/v1/appointments",            "summary": "list appointments (?subject=)"},
-            {"method": "POST", "path": "/api/v1/appointments",            "summary": "upsert an appointment (req: subject_id, title, starts_at)"},
-            {"method": "GET",  "path": "/api/v1/appointments/{id}",       "summary": "one appointment"},
-            {"method": "GET",  "path": "/api/v1/allergies",               "summary": "list allergies (?subject=)"},
-            {"method": "POST", "path": "/api/v1/allergies",               "summary": "upsert an allergy (req: subject_id, substance)"},
-            {"method": "GET",  "path": "/api/v1/allergies/{id}",          "summary": "one allergy"},
-            {"method": "GET",  "path": "/api/v1/medications",             "summary": "list medications (?subject=)"},
-            {"method": "POST", "path": "/api/v1/medications",             "summary": "upsert a medication (req: subject_id, name)"},
-            {"method": "GET",  "path": "/api/v1/medications/{id}",        "summary": "one medication"},
-            {"method": "GET",  "path": "/api/v1/conditions",              "summary": "list conditions / problem list (?subject=)"},
-            {"method": "POST", "path": "/api/v1/conditions",              "summary": "upsert a condition (req: subject_id, name)"},
-            {"method": "GET",  "path": "/api/v1/conditions/{id}",         "summary": "one condition"},
-            {"method": "GET",  "path": "/api/v1/immunizations",           "summary": "list immunizations (?subject=)"},
-            {"method": "POST", "path": "/api/v1/immunizations",           "summary": "upsert an immunization (req: subject_id, vaccine)"},
-            {"method": "GET",  "path": "/api/v1/immunizations/{id}",      "summary": "one immunization"},
-            {"method": "GET",  "path": "/api/v1/observations",            "summary": "list vitals + labs (?subject=&code=<LOINC>)"},
-            {"method": "POST", "path": "/api/v1/observations",            "summary": "upsert an observation (req: subject_id, display, effective_on); BP = two rows; growth vitals use canonical LOINC"},
-            {"method": "GET",  "path": "/api/v1/observations/{id}",       "summary": "one observation"},
-            {"method": "GET",  "path": "/api/v1/care-reminders",          "summary": "list care reminders / what's due (?subject=)"},
-            {"method": "POST", "path": "/api/v1/care-reminders",          "summary": "create a care reminder (req: subject_id, title)"},
-            {"method": "GET",  "path": "/api/v1/care-reminders/{id}",     "summary": "one care reminder"},
-            {"method": "GET",  "path": "/api/v1/subject-identifiers",     "summary": "list cross-system identifiers / MRNs (?subject=)"},
-            {"method": "POST", "path": "/api/v1/subject-identifiers",     "summary": "upsert an identifier (req: subject_id, source_id, value)"},
-            {"method": "GET",  "path": "/api/v1/subject-identifiers/{id}", "summary": "one identifier"},
-            {"method": "GET",  "path": "/api/v1/subject-providers",       "summary": "list care-team links (?subject=)"},
-            {"method": "POST", "path": "/api/v1/subject-providers",       "summary": "upsert a care-team link (req: subject_id, provider_id)"},
-            {"method": "GET",  "path": "/api/v1/subject-relationships",   "summary": "list family graph edges (?subject=)"},
-            {"method": "POST", "path": "/api/v1/subject-relationships",   "summary": "upsert a relationship (req: subject_id, related_subject_id, relationship)"},
-            {"method": "GET",  "path": "/api/v1/insurance-plans",         "summary": "list insurance cards/policies (reference data; not subject-scoped)"},
-            {"method": "POST", "path": "/api/v1/insurance-plans",         "summary": "upsert an insurance plan (req: payer_name); dedup on (source_id, external_id)"},
-            {"method": "GET",  "path": "/api/v1/insurance-plans/{id}",    "summary": "one insurance plan"},
-            {"method": "GET",  "path": "/api/v1/subject-insurance",       "summary": "list coverage links / who's on which card (?subject=)"},
-            {"method": "POST", "path": "/api/v1/subject-insurance",       "summary": "upsert a coverage link (req: subject_id, plan_id)"},
-            {"method": "GET",  "path": "/api/v1/search?q=...&subject=...", "summary": "full-text search across incidents + records"},
-            {"method": "POST", "path": "/api/v1/import/fhir?subject=<uuid>&source=<name>", "summary": "import a FHIR R4 Bundle (Apple Health clinical records / Epic FHIR export); idempotent on resource id"},
-            {"method": "POST", "path": "/api/v1/import/ccda?subject=<uuid>&source=<name>", "summary": "import a C-CDA XML document (MyChart 'Download My Record'); body is the raw XML"},
-        ],
+        "endpoints": endpoints,
         "provenance": "On any POST that accepts source provenance, supply source_id + \
             external_id (e.g. a stable hash of the source document + item) to get \
             idempotent upserts. external_url, source_synced_at, and source_payload (raw \
