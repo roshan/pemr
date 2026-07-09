@@ -262,17 +262,26 @@ fn vitals<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
             .or_else(|| v.value_text.clone())
             .unwrap_or_else(|| "—".into());
         Ok(Some(match mode {
-            Mode::Card => card("Recent vitals & labs", None, if rows.is_empty() {
-                c::empty_state("No vitals or labs recorded")
-            } else {
-                truncated_list(rows.iter().map(|v| c::panel_list_item(
-                    html! {
-                        (v.display)
-                        @if let Some(f) = &v.abnormal_flag { @if f != "normal" { " " (c::badge_warn(f)) } }
-                    },
-                    html! { (val(v)) @if let Some(u) = &v.unit { " " (u) } " · " (v.effective_on) },
-                )), rows.len(), None)
-            }),
+            Mode::Card => {
+                let total: i64 = sqlx::query_scalar(
+                    "select count(*) from observations where subject_id = $1",
+                )
+                .bind(s.id)
+                .fetch_one(pool)
+                .await?;
+                let href = format!("/subjects/{}/vitals", s.id);
+                card("Recent vitals & labs", Some(href.clone()), if rows.is_empty() {
+                    c::empty_state("No vitals or labs recorded")
+                } else {
+                    truncated_list(rows.iter().map(|v| c::panel_list_item(
+                        html! {
+                            (v.display)
+                            @if let Some(f) = &v.abnormal_flag { @if f != "normal" { " " (c::badge_warn(f)) } }
+                        },
+                        html! { (val(v)) @if let Some(u) = &v.unit { " " (u) } " · " (v.effective_on) },
+                    )), total as usize, Some(href))
+                })
+            }
             Mode::Print => print_section("Recent vitals & growth", if rows.is_empty() {
                 c::empty_state("None recorded")
             } else {

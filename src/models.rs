@@ -124,6 +124,21 @@ pub struct VitalRow {
     pub abnormal_flag: Option<String>,
 }
 
+/// A full observation row for the vitals & labs list. `value_num`/`ref_low`/
+/// `ref_high` must be projected `::float8` by the query.
+#[derive(Debug, FromRow)]
+pub struct ObservationRow {
+    pub effective_on: Date,
+    pub category: String,
+    pub display: String,
+    pub value_num: Option<f64>,
+    pub value_text: Option<String>,
+    pub unit: Option<String>,
+    pub ref_low: Option<f64>,
+    pub ref_high: Option<f64>,
+    pub abnormal_flag: Option<String>,
+}
+
 /// A care-team member joined for the subject chart (subject_providers → providers).
 #[derive(Debug, FromRow)]
 pub struct CareTeamMember {

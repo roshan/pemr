@@ -192,6 +192,36 @@ pub async fn summary(
     Ok(crate::views::summary::page(&nav, &s, &sections))
 }
 
+/// `/subjects/{id}/vitals` — the full vitals & labs list (all observations).
+pub async fn vitals_labs(
+    State(state): State<AppState>,
+    viewer: ViewerContext,
+    Path(id): Path<Uuid>,
+) -> AppResult<Markup> {
+    let subjects = load_subjects(&state.pool).await?;
+    let s = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?;
+    let rows = sqlx::query_as::<_, crate::models::ObservationRow>(
+        "select effective_on, category, display, value_num::float8 as value_num, value_text, unit,
+                ref_low::float8 as ref_low, ref_high::float8 as ref_high, abnormal_flag
+           from observations where subject_id = $1
+          order by effective_on desc, panel_id nulls first, display",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    let nav = Nav {
+        title: &s.full_name,
+        current_path: "/subjects",
+        subjects: &subjects,
+        current_subject: Some(id),
+        viewer: &viewer,
+    };
+    Ok(crate::views::vitals::page(&nav, &s, &rows))
+}
+
 /// `/subjects/{id}/immunizations` — immunization record + forecast (PEMR-25).
 pub async fn immunizations(
     State(state): State<AppState>,

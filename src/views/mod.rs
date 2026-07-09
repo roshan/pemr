@@ -18,3 +18,4 @@ pub mod source;
 pub mod subject;
 pub mod summary;
 pub mod sync;
+pub mod vitals;

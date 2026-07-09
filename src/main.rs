@@ -147,6 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/subjects/{id}/incidents", get(handlers::incidents::list_for_subject))
         .route("/subjects/{id}/timeline", get(handlers::dashboard::timeline_for_subject))
         .route("/subjects/{id}/growth", get(handlers::subjects::growth))
+        .route("/subjects/{id}/vitals", get(handlers::subjects::vitals_labs))
         .route(
             "/subjects/{id}/immunizations",
             get(handlers::subjects::immunizations).post(handlers::clinical::add_immunization),
