@@ -120,14 +120,11 @@ fn bio_header(subject: &Subject) -> Markup {
             }
             div class="flex flex-wrap gap-2" {
                 (c::button_link_primary(format!("/subjects/{}/clinical", subject.id), "+ Add data"))
-                (c::button_link_secondary(format!("/subjects/{}/summary", subject.id), "Summary (print)"))
-                (c::button_link_secondary(format!("/subjects/{}/appointments", subject.id), "Appointments"))
-                (c::button_link_secondary(format!("/subjects/{}/immunizations", subject.id), "Immunizations"))
-                (c::button_link_secondary(format!("/subjects/{}/vitals", subject.id), "Vitals & labs"))
-                (c::button_link_secondary(format!("/subjects/{}/care-team", subject.id), "Care team & IDs"))
-                (c::button_link_secondary(format!("/subjects/{}/reminders", subject.id), "Reminders"))
-                (c::button_link_secondary(format!("/subjects/{}/growth", subject.id), "Growth charts"))
-                (c::button_link_secondary(format!("/subjects/{}/edit", subject.id), "Edit profile"))
+                // Secondary actions come from the `subject_pages` registry — the
+                // same one that wires the routes, so buttons never drift from pages.
+                @for p in crate::subject_pages::pages() {
+                    (c::button_link_secondary(format!("/subjects/{}/{}", subject.id, p.slug), p.label))
+                }
             }
         }
     }

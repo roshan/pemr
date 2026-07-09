@@ -16,6 +16,7 @@ mod importer;
 mod models;
 mod peds;
 mod subject_modules;
+mod subject_pages;
 mod sync;
 mod viewer;
 mod views;
@@ -86,7 +87,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The UI router. CF Access gates entry in production; the viewer
     // middleware reads `Cf-Access-Authenticated-User-Email` and sets a UI
     // default subject. It never gates access.
-    let ui = Router::<handlers::AppState>::new()
+    // Per-subject pages (`/subjects/{id}/{slug}`) come from the `subject_pages`
+    // registry — the same registry the chart's actions row iterates, so the
+    // routes and buttons never drift.
+    let ui = subject_pages::register(Router::<handlers::AppState>::new())
         .route("/", get(handlers::dashboard::index))
         .route("/timeline", get(handlers::dashboard::timeline_page))
         .route("/timeline/day", get(handlers::dashboard::timeline_day))
@@ -138,40 +142,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // subjects
         .route("/subjects", get(handlers::subjects::list).post(handlers::subjects::create))
         .route("/subjects/{id}", get(handlers::subjects::detail))
-        .route(
-            "/subjects/{id}/edit",
-            get(handlers::subjects::edit_form).post(handlers::subjects::edit),
-        )
-        // per-subject path-style scopes
+        // per-subject path-style scopes (the button-backed pages live in
+        // `subject_pages`; these are the extra scoped views)
         .route("/subjects/{id}/records", get(handlers::records::list_for_subject))
         .route("/subjects/{id}/incidents", get(handlers::incidents::list_for_subject))
         .route("/subjects/{id}/timeline", get(handlers::dashboard::timeline_for_subject))
-        .route("/subjects/{id}/growth", get(handlers::subjects::growth))
-        .route("/subjects/{id}/vitals", get(handlers::subjects::vitals_labs))
-        .route(
-            "/subjects/{id}/immunizations",
-            get(handlers::subjects::immunizations).post(handlers::clinical::add_immunization),
-        )
         // clinical entry (PEMR-3 UI)
         .route("/subjects/{id}/clinical", get(handlers::clinical::page))
         .route("/subjects/{id}/allergies", post(handlers::clinical::add_allergy))
         .route("/subjects/{id}/medications", post(handlers::clinical::add_medication))
         .route("/subjects/{id}/conditions", post(handlers::clinical::add_condition))
         .route("/subjects/{id}/observations", post(handlers::clinical::add_observation))
-        .route("/subjects/{id}/summary", get(handlers::subjects::summary))
-        .route(
-            "/subjects/{id}/appointments",
-            get(handlers::appointments::list).post(handlers::appointments::create),
-        )
         .route(
             "/appointments/{id}/edit",
             get(handlers::appointments::edit_form).post(handlers::appointments::edit),
         )
-        // care team + identifiers (PEMR-17)
-        .route(
-            "/subjects/{id}/care-team",
-            get(handlers::care_team::page).post(handlers::care_team::add_provider),
-        )
+        // care team + identifiers (PEMR-17) — the care-team page itself is in
+        // `subject_pages`; these are its sub-actions
         .route(
             "/subjects/{id}/care-team/{pid}/remove",
             post(handlers::care_team::remove_provider),
@@ -188,11 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/subjects/{id}/relationships",
             post(handlers::care_team::add_relationship),
         )
-        // care reminders (PEMR-19)
-        .route(
-            "/subjects/{id}/reminders",
-            get(handlers::reminders::page).post(handlers::reminders::add),
-        )
+        // care reminders (PEMR-19) — the reminders page is in `subject_pages`
         .route(
             "/subjects/{id}/reminders/{rid}/{status}",
             post(handlers::reminders::mark),
