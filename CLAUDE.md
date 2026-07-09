@@ -242,9 +242,13 @@ When a view needs a new visual idiom (a new badge color, a new button variant, a
 
 ## Subject-page modules (how to add a subfeature)
 
-The subject chart's "Clinical summary" is an **ordered registry of self-contained modules**, not a god-struct — `src/subject_modules.rs`. Each module is a `fn(&PgPool, &Subject) -> Pin<Box<dyn Future<Output = Result<Option<Markup>, sqlx::Error>>>>` that **owns its own query + render** and returns `None` to opt out (e.g. `growth` opts out when the subject has no measurements). The page just iterates `MODULES` and lays out whatever cards come back — it has **zero per-feature knowledge**. This mirrors the `sync::TaskDef`/`TaskFn` fn-pointer registry.
+Two IoC registries drive the subject chart — **never hardcode a card, a button, or a route**:
 
-**To add a per-subject subfeature: write one module fn in `subject_modules.rs` and add one line to `MODULES`.** Do NOT thread a new field through `ClinicalSummary` or add an `@if` to the view — that's the anti-pattern this replaced. Registry order = render order. (`ClinicalSummary`/`clinical_summary_for` still exist, but only feed the separate print summary at `/subjects/{id}/summary`.)
+**1. `subject_modules` (the clinical *cards*)** — `src/subject_modules.rs`. Each module is a `fn(&PgPool, &Subject, Mode) -> Pin<Box<dyn Future<Output = Result<Option<Markup>, sqlx::Error>>>>` that **owns its own query + render** and returns `None` to opt out (e.g. `growth`/`insurance` are card-only; `growth` also opts out with no measurements). `Mode` is `Card` (chart) or `Print` (the printable summary) — a module renders itself for either, so the query lives in **one** place. The chart and the print view both just iterate `MODULES` via `render_all(pool, s, mode)` — zero per-feature knowledge. (The old `ClinicalSummary` god-struct is **gone**; the home-dashboard snapshot uses `snapshot_counts()`.) **Add a card = one module fn + one `MODULES` line.**
+
+**2. `subject_pages` (the *pages* + their buttons)** — `src/subject_pages.rs`. One `SubjectPage { slug, label, route }` entry drives **both** the chart's actions-row button **and** the `/subjects/{id}/{slug}` route: the view loops `pages()` for buttons, and `main.rs` calls `subject_pages::register(router)` to wire the routes. **Add a page = one registry line** (plus the handler) — do NOT add a `button_link` in `views::subject` or a `.route()` in `main.rs`. Auxiliary sub-actions (`…/remove`, `/identifiers`, reminder-mark, etc.) stay explicit routes.
+
+Both mirror the `sync::TaskDef`/`TaskFn` fn-pointer registry. Registry order = display order.
 
 ## Deployment shape (kant)
 
