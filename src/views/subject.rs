@@ -41,6 +41,11 @@ pub fn list_page(nav: &Nav<'_>, subjects: &[Subject], counts: &[(uuid::Uuid, i64
                     (c::field("Sex at birth", c::input_text("sex_at_birth", "", false, Some(40))))
                     (c::field("Blood type", c::input_text("blood_type", "", false, Some(10))))
                     (c::field_with_hint(
+                        "Gestational age at birth (weeks)",
+                        "Optional. Blank = term. Used only to compute developmental-milestone age.",
+                        c::input_number("gestational_age_weeks", "", Some(20), Some(45)),
+                    ))
+                    (c::field_with_hint(
                         "Cloudflare Access email",
                         "Optional — used as the default subject for that email when they sign in.",
                         c::input_email("cf_access_email", "", None),
@@ -61,6 +66,7 @@ pub fn dashboard_page(
     nav: &Nav<'_>,
     subject: &Subject,
     cards: &[Markup],
+    feature_area: &Markup,
     data: &DashboardData<'_>,
     timeline: &dashboard::TimelineData,
 ) -> Markup {
@@ -75,6 +81,12 @@ pub fn dashboard_page(
         section class="mb-6" {
             (c::section_heading("Clinical summary"))
             (c::card_grid(html! { @for card in cards { (card) } }))
+        }
+        // Opt-in per-subject feature modules (`feature_registry`): the container
+        // is `#subject-features`, swapped in place when a feature is added/removed.
+        section class="mb-6" {
+            (c::section_heading("Feature modules"))
+            (feature_area)
         }
         section class="mb-6" {
             div class="flex items-baseline justify-between mb-2" {
@@ -146,6 +158,15 @@ pub fn edit_form(nav: &Nav<'_>, subject: &Subject, error: Option<&str>) -> Marku
             (c::field("Blood type", c::input_text(
                 "blood_type", &subject.blood_type.clone().unwrap_or_default(), false, Some(10),
             )))
+            (c::field_with_hint(
+                "Gestational age at birth (weeks)",
+                "Optional. Blank = term. Used only to compute developmental-milestone age.",
+                c::input_number(
+                    "gestational_age_weeks",
+                    &subject.gestational_age_weeks.map(|w| w.to_string()).unwrap_or_default(),
+                    Some(20), Some(45),
+                ),
+            ))
             (c::field("Cloudflare Access email", c::input_email(
                 "cf_access_email",
                 &subject.cf_access_email.clone().unwrap_or_default(),

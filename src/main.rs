@@ -4,12 +4,15 @@ mod config;
 mod db;
 mod dicom_import;
 mod error;
+mod feature_registry;
 mod files;
 mod growth_ref;
 mod handlers;
 mod images;
 mod import_cli;
 mod importer;
+mod milestone_age;
+mod milestones;
 mod models;
 mod peds;
 mod subject_modules;
@@ -164,6 +167,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // routes never drift. Registered by `subject_pages::register` above.
         // clinical entry (PEMR-3 UI)
         .route("/subjects/{id}/clinical", get(handlers::clinical::page))
+        // per-subject opt-in feature registry (PEMR-45): enable / disable a module
+        .route(
+            "/subjects/{id}/features/{key}",
+            post(handlers::milestones::enable_feature),
+        )
+        .route(
+            "/subjects/{id}/features/{key}/remove",
+            post(handlers::milestones::disable_feature),
+        )
+        // developmental milestone tracker (PEMR-35). The checklist + mark endpoints
+        // return HTMX partials; progress + summary are full pages. Feature-gated
+        // surfaces, so these stay explicit sub-actions (not `subject_pages`).
+        .route(
+            "/subjects/{id}/milestones/checklist",
+            get(handlers::milestones::checklist),
+        )
+        .route(
+            "/subjects/{id}/milestones/mark/{key}",
+            post(handlers::milestones::mark),
+        )
+        .route(
+            "/subjects/{id}/milestones/progress",
+            get(handlers::milestones::progress),
+        )
+        .route(
+            "/subjects/{id}/milestones/summary",
+            get(handlers::milestones::summary),
+        )
         .route("/subjects/{id}/allergies", post(handlers::clinical::add_allergy))
         .route("/subjects/{id}/medications", post(handlers::clinical::add_medication))
         .route("/subjects/{id}/conditions", post(handlers::clinical::add_condition))

@@ -46,9 +46,30 @@ pub struct CreateForm {
     #[serde(default)]
     pub blood_type: String,
     #[serde(default)]
+    pub gestational_age_weeks: String,
+    #[serde(default)]
     pub cf_access_email: String,
     #[serde(default)]
     pub notes: String,
+}
+
+/// Parse the optional "gestational age at birth (weeks)" input. Blank → None
+/// (treated as term). A value outside a plausible range is rejected so a typo
+/// can't silently poison the corrected-age computation.
+fn parse_gestational_age(s: &str) -> Result<Option<i16>, AppError> {
+    let t = s.trim();
+    if t.is_empty() {
+        return Ok(None);
+    }
+    let w: i16 = t
+        .parse()
+        .map_err(|_| AppError::BadRequest("gestational age must be a whole number of weeks".into()))?;
+    if !(20..=45).contains(&w) {
+        return Err(AppError::BadRequest(
+            "gestational age must be between 20 and 45 weeks".into(),
+        ));
+    }
+    Ok(Some(w))
 }
 
 pub async fn create(
@@ -63,12 +84,13 @@ pub async fn create(
         ));
     }
     let dob = parse_date(&form.dob).map_err(AppError::BadRequest)?;
+    let gestational_age_weeks = parse_gestational_age(&form.gestational_age_weeks)?;
     let id = Uuid::now_v7();
     let full_name = format!("{given_name} {family_name}");
     sqlx::query(
         "insert into subjects (id, full_name, given_name, family_name, dob,
-                               sex_at_birth, blood_type, notes, cf_access_email)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+                               sex_at_birth, blood_type, gestational_age_weeks, notes, cf_access_email)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
     )
     .bind(id)
     .bind(&full_name)
@@ -77,6 +99,7 @@ pub async fn create(
     .bind(dob)
     .bind(empty_to_none(form.sex_at_birth))
     .bind(empty_to_none(form.blood_type))
+    .bind(gestational_age_weeks)
     .bind(form.notes)
     .bind(empty_to_none(form.cf_access_email))
     .execute(&state.pool)
@@ -147,6 +170,9 @@ pub async fn detail(
 
     let cards =
         crate::subject_modules::render_all(&state.pool, &s, crate::subject_modules::Mode::Card).await?;
+    // Opt-in per-subject feature modules (PEMR-45): milestones etc. Absent until
+    // the viewer adds them from the chart.
+    let feature_area = crate::handlers::milestones::render_feature_area(&state.pool, &s).await?;
     let timeline = crate::handlers::dashboard::load_timeline(&state.pool, Some(id), "1y", None, None).await?;
 
     let nav = Nav {
@@ -165,7 +191,7 @@ pub async fn detail(
         // The chart renders the full clinical summary below; no snapshot needed.
         clinical: None,
     };
-    Ok(subject::dashboard_page(&nav, &s, &cards, &data, &timeline))
+    Ok(subject::dashboard_page(&nav, &s, &cards, &feature_area, &data, &timeline))
 }
 
 
@@ -382,6 +408,7 @@ pub async fn edit(
         ));
     }
     let dob = parse_date(&form.dob).map_err(AppError::BadRequest)?;
+    let gestational_age_weeks = parse_gestational_age(&form.gestational_age_weeks)?;
     let full_name = format!("{given_name} {family_name}");
     sqlx::query(
         "update subjects set
@@ -391,8 +418,9 @@ pub async fn edit(
             dob = $5,
             sex_at_birth = $6,
             blood_type = $7,
-            cf_access_email = $8,
-            notes = $9,
+            gestational_age_weeks = $8,
+            cf_access_email = $9,
+            notes = $10,
             updated_at = now()
           where id = $1",
     )
@@ -403,6 +431,7 @@ pub async fn edit(
     .bind(dob)
     .bind(empty_to_none(form.sex_at_birth))
     .bind(empty_to_none(form.blood_type))
+    .bind(gestational_age_weeks)
     .bind(empty_to_none(form.cf_access_email))
     .bind(form.notes)
     .execute(&state.pool)

@@ -14,6 +14,7 @@ pub mod dashboard;
 pub mod import;
 pub mod incidents;
 pub mod insurance;
+pub mod milestones;
 pub mod providers;
 pub mod records;
 pub mod reminders;

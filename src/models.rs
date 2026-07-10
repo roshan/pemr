@@ -16,6 +16,11 @@ pub struct Subject {
     pub cf_access_email: Option<String>,
     // 0008: positive "no known allergies" assertion (distinct from "no data").
     pub no_known_allergies: bool,
+    // 0018: weeks of gestation at birth (null = unknown → treated as term). Feeds
+    // the silent corrected-age computation for the milestone tracker (PEMR-35).
+    // `#[sqlx(default)]` so any partial SELECT still maps (comes back None).
+    #[sqlx(default)]
+    pub gestational_age_weeks: Option<i16>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -90,6 +95,44 @@ pub struct Record {
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
+}
+
+/// A per-subject feature enablement (PEMR-45). The catalogue of features is an
+/// in-code registry (`feature_registry.rs`); this row records that `subject_id`
+/// has turned `feature_key` on. The registry itself works with scalar queries;
+/// this FromRow model exists to mirror the table (consistent with the other model
+/// structs) for a future API/read consumer.
+#[allow(dead_code)]
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct SubjectFeature {
+    pub id: Uuid,
+    pub subject_id: Uuid,
+    pub feature_key: String,
+    pub config: Option<serde_json::Value>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub enabled_at: OffsetDateTime,
+}
+
+/// A user-entered developmental-milestone assessment (PEMR-37). No provenance
+/// 5-tuple — this is hand-entered, not imported. `expected_age_months` + `domain`
+/// are denormalized from the vendored dataset at write time; `age_basis_used` +
+/// `chronological_age_days` are a point-in-time snapshot (see migration 0018).
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct MilestoneResponse {
+    pub id: Uuid,
+    pub subject_id: Uuid,
+    pub milestone_key: String,
+    pub domain: String,
+    pub expected_age_months: i16,
+    pub response: String,
+    pub observed_on: Option<Date>,
+    pub age_basis_used: String,
+    pub chronological_age_days: i32,
+    pub note: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub answered_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize)]

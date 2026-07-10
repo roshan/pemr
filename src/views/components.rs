@@ -249,6 +249,63 @@ pub fn button_link_secondary(href: impl Render, label: impl Render) -> Markup {
     }
 }
 
+/// A button that hx-GETs `url` into `target` (outerHTML swap) — for in-place
+/// navigation like the milestone checkpoint prev/next stepper. When `enabled` is
+/// false it renders as an inert, muted control (e.g. no earlier checkpoint).
+pub fn hx_nav_button(label: impl Render, url: &str, target: &str, enabled: bool) -> Markup {
+    if enabled {
+        html! {
+            button type="button" hx-get=(url) hx-target=(target) hx-swap="outerHTML"
+                class={(BTN_BASE) " border border-line bg-surface text-ink hover:bg-slate-50"} {
+                (label)
+            }
+        }
+    } else {
+        html! {
+            span class={(BTN_BASE) " border border-line bg-slate-50 text-slate-400 cursor-not-allowed"} {
+                (label)
+            }
+        }
+    }
+}
+
+/// One milestone checklist row — a bordered list item. The view fills `body`
+/// (usually a per-milestone `<form>` with the response controls).
+pub fn milestone_row(body: Markup) -> Markup {
+    html! {
+        li class="py-2 border-b border-line last:border-0" { (body) }
+    }
+}
+
+/// A button that hx-POSTs `url` and swaps the response into `target`
+/// (outerHTML) — for the feature registry's add / remove controls (no page
+/// reload; the surface "pops in"). `danger` picks the destructive look.
+pub fn hx_action_button(label: impl Render, url: &str, target: &str, danger: bool) -> Markup {
+    let variant = if danger {
+        " text-danger hover:bg-rose-50"
+    } else {
+        " border border-line bg-surface text-ink hover:bg-slate-50"
+    };
+    html! {
+        button type="button" hx-post=(url) hx-target=(target) hx-swap="outerHTML"
+            class={(BTN_BASE) (variant)} { (label) }
+    }
+}
+
+/// A small progress meter (filled bar) for per-domain milestone completion.
+/// `met`/`total` drive the fill; renders nothing fancy — a labelled bar.
+pub fn progress_meter(met: usize, total: usize) -> Markup {
+    let pct = if total == 0 { 0.0 } else { (met as f64 / total as f64) * 100.0 };
+    html! {
+        div class="flex items-center gap-2" {
+            div class="h-2 w-24 rounded-full bg-slate-100 overflow-hidden" {
+                div class="h-2 rounded-full bg-brand" style={ "width:" (format!("{pct:.0}")) "%" } {}
+            }
+            span class="text-xs text-muted whitespace-nowrap" { (met) "/" (total) }
+        }
+    }
+}
+
 /// Subtle text-button (used for things like "unlink" via HTMX delete).
 pub fn button_subtle_danger(label: impl Render, htmx_attrs: HtmxDelete) -> Markup {
     html! {
@@ -345,6 +402,15 @@ pub fn input_email(name: &str, value: &str, placeholder: Option<&str>) -> Markup
 
 pub fn input_date(name: &str, value: &str) -> Markup {
     html! { input type="date" name=(name) value=(value) class=(FIELD_INPUT); }
+}
+
+/// A whole-number input with optional min/max bounds (e.g. gestational weeks).
+pub fn input_number(name: &str, value: &str, min: Option<i64>, max: Option<i64>) -> Markup {
+    html! {
+        input type="number" inputmode="numeric" name=(name) value=(value)
+            min=[min.map(|m| m.to_string())] max=[max.map(|m| m.to_string())]
+            class=(FIELD_INPUT);
+    }
 }
 
 pub fn input_datetime(name: &str, value: &str, required: bool) -> Markup {

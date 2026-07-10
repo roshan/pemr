@@ -1,0 +1,160 @@
+milestone_key	checkpoint_months	domain	text
+se-02-1	2	social_emotional	Calms down when spoken to or picked up
+se-02-2	2	social_emotional	Looks at your face
+se-02-3	2	social_emotional	Seems happy to see you when you walk up to her
+se-02-4	2	social_emotional	Smiles when you talk to or smile at her
+lang-02-1	2	language	Makes sounds other than crying
+lang-02-2	2	language	Reacts to loud sounds
+cog-02-1	2	cognitive	Watches you as you move
+cog-02-2	2	cognitive	Looks at a toy for several seconds
+mov-02-1	2	movement	Holds head up when on tummy
+mov-02-2	2	movement	Moves both arms and both legs
+mov-02-3	2	movement	Opens hands briefly
+se-04-1	4	social_emotional	Smiles on his own to get your attention
+se-04-2	4	social_emotional	Chuckles (not yet a full laugh) when you try to make him laugh
+se-04-3	4	social_emotional	Looks at you, moves, or makes sounds to get or keep your attention
+lang-04-1	4	language	Makes sounds like “oooo”, “aahh” (cooing)
+lang-04-2	4	language	Makes sounds back when you talk to him
+lang-04-3	4	language	Turns head towards the sound of your voice
+cog-04-1	4	cognitive	If hungry, opens mouth when he sees breast or bottle
+cog-04-2	4	cognitive	Looks at her hands with interest
+mov-04-1	4	movement	Holds head steady without support when you are holding him
+mov-04-2	4	movement	Holds a toy when you put it in his hand
+mov-04-3	4	movement	Uses his arm to swing at toys
+mov-04-4	4	movement	Brings hands to mouth
+mov-04-5	4	movement	Pushes up onto elbows/forearms when on tummy
+se-06-1	6	social_emotional	Knows familiar people
+se-06-2	6	social_emotional	Likes to look at self in a mirror
+se-06-3	6	social_emotional	Laughs
+lang-06-1	6	language	Takes turns making sounds with you
+lang-06-2	6	language	Blows “raspberries” (sticks tongue out and blows)
+lang-06-3	6	language	Makes squealing noises
+cog-06-1	6	cognitive	Puts things in her mouth to explore them
+cog-06-2	6	cognitive	Reaches to grab a toy she wants
+cog-06-3	6	cognitive	Closes lips to show she doesn’t want more food
+mov-06-1	6	movement	Rolls from tummy to back
+mov-06-2	6	movement	Pushes up with straight arms when on tummy
+mov-06-3	6	movement	Leans on hands to support herself when sitting
+se-09-1	9	social_emotional	Is shy, clingy, or fearful around strangers
+se-09-2	9	social_emotional	Shows several facial expressions, like happy, sad, angry, and surprised
+se-09-3	9	social_emotional	Looks when you call her name
+se-09-4	9	social_emotional	Reacts when you leave (looks, reaches for you, or cries)
+se-09-5	9	social_emotional	Smiles or laughs when you play peek-a-boo
+lang-09-1	9	language	Makes a lot of different sounds like “mamamama” and “dadadada”
+lang-09-2	9	language	Lifts arms up to be picked up
+cog-09-1	9	cognitive	Looks for objects when dropped out of sight (like his spoon or toy)
+cog-09-2	9	cognitive	Bangs two things together
+mov-09-1	9	movement	Gets to a sitting position by herself
+mov-09-2	9	movement	Moves things from one hand to her other hand
+mov-09-3	9	movement	Uses fingers to “rake” food towards himself
+mov-09-4	9	movement	Sits without support
+se-12-1	12	social_emotional	Plays games with you, like pat-a-cake
+lang-12-1	12	language	Waves “bye-bye”
+lang-12-2	12	language	Calls a parent “mama” or “dada” or another special name
+lang-12-3	12	language	Understands “no” (pauses briefly or stops when you say it)
+cog-12-1	12	cognitive	Puts something in a container, like a block in a cup
+cog-12-2	12	cognitive	Looks for things he sees you hide, like a toy under a blanket
+mov-12-1	12	movement	Pulls up to stand
+mov-12-2	12	movement	Walks, holding on to furniture
+mov-12-3	12	movement	Drinks from a cup without a lid, as you hold it
+mov-12-4	12	movement	Picks things up between thumb and pointer finger, like small bits of food
+se-15-1	15	social_emotional	Copies other children while playing, like taking toys out of a container when another child does
+se-15-2	15	social_emotional	Shows you an object she likes
+se-15-3	15	social_emotional	Claps when excited
+se-15-4	15	social_emotional	Hugs stuffed doll or other toy
+se-15-5	15	social_emotional	Shows you affection (hugs, cuddles, or kisses you)
+lang-15-1	15	language	Tries to say one or two words besides “mama” or “dada,” like “ba” for ball or “da” for dog
+lang-15-2	15	language	Looks at a familiar object when you name it
+lang-15-3	15	language	Follows directions given with both a gesture and words. For example, he gives you a toy when you hold out your hand and say, “Give me the toy.”
+lang-15-4	15	language	Points to ask for something or to get help
+cog-15-1	15	cognitive	Tries to use things the right way, like a phone, cup, or book
+cog-15-2	15	cognitive	Stacks at least two small objects, like blocks
+mov-15-1	15	movement	Takes a few steps on his own
+mov-15-2	15	movement	Uses fingers to feed herself some food
+se-18-1	18	social_emotional	Moves away from you, but looks to make sure you are close by
+se-18-2	18	social_emotional	Points to show you something interesting
+se-18-3	18	social_emotional	Puts hands out for you to wash them
+se-18-4	18	social_emotional	Looks at a few pages in a book with you
+se-18-5	18	social_emotional	Helps you dress him by pushing arm through sleeve or lifting up foot
+lang-18-1	18	language	Tries to say three or more words besides “mama” or “dada”
+lang-18-2	18	language	Follows one-step directions without any gestures, like giving you the toy when you say, “Give it to me.”
+cog-18-1	18	cognitive	Copies you doing chores, like sweeping with a broom
+cog-18-2	18	cognitive	Plays with toys in a simple way, like pushing a toy car
+mov-18-1	18	movement	Walks without holding on to anyone or anything
+mov-18-2	18	movement	Scribbles
+mov-18-3	18	movement	Drinks from a cup without a lid and may spill sometimes
+mov-18-4	18	movement	Feeds himself with his fingers
+mov-18-5	18	movement	Tries to use a spoon
+mov-18-6	18	movement	Climbs on and off a couch or chair without help
+se-24-1	24	social_emotional	Notices when others are hurt or upset, like pausing or looking sad when someone is crying
+se-24-2	24	social_emotional	Looks at your face to see how to react in a new situation
+lang-24-1	24	language	Points to things in a book when you ask, like “Where is the bear?”
+lang-24-2	24	language	Says at least two words together, like “More milk.”
+lang-24-3	24	language	Points to at least two body parts when you ask him to show you
+lang-24-4	24	language	Uses more gestures than just waving and pointing, like blowing a kiss or nodding yes
+cog-24-1	24	cognitive	Holds something in one hand while using the other hand; for example, holding a container and taking the lid off
+cog-24-2	24	cognitive	Tries to use switches, knobs, or buttons on a toy
+cog-24-3	24	cognitive	Plays with more than one toy at the same time, like putting toy food on a toy plate
+mov-24-1	24	movement	Kicks a ball
+mov-24-2	24	movement	Runs
+mov-24-3	24	movement	Walks (not climbs) up a few stairs with or without help
+mov-24-4	24	movement	Eats with a spoon
+se-30-1	30	social_emotional	Plays next to other children and sometimes plays with them
+se-30-2	30	social_emotional	Shows you what she can do by saying, “Look at me!”
+se-30-3	30	social_emotional	Follows simple routines when told, like helping to pick up toys when you say, “It’s clean-up time.”
+lang-30-1	30	language	Says about 50 words
+lang-30-2	30	language	Says two or more words together, with one action word, like “Doggie run”
+lang-30-3	30	language	Names things in a book when you point and ask, “What is this?”
+lang-30-4	30	language	Says words like “I,” “me,” or “we”
+cog-30-1	30	cognitive	Uses things to pretend, like feeding a block to a doll as if it were food
+cog-30-2	30	cognitive	Shows simple problem-solving skills, like standing on a small stool to reach something
+cog-30-3	30	cognitive	Follows two-step instructions like “Put the toy down and close the door.”
+cog-30-4	30	cognitive	Shows he knows at least one color, like pointing to a red crayon when you ask, “Which one is red?”
+mov-30-1	30	movement	Uses hands to twist things, like turning doorknobs or unscrewing lids
+mov-30-2	30	movement	Takes some clothes off by himself, like loose pants or an open jacket
+mov-30-3	30	movement	Jumps off the ground with both feet
+mov-30-4	30	movement	Turns book pages, one at a time, when you read to her
+se-36-1	36	social_emotional	Calms down within 10 minutes after you leave her, like at a childcare drop off
+se-36-2	36	social_emotional	Notices other children and joins them to play
+lang-36-1	36	language	Talks with you in conversation using at least two back-and-forth exchanges
+lang-36-2	36	language	Asks “who,” “what,” “where,” or “why” questions, like “Where is mommy/daddy?”
+lang-36-3	36	language	Says what action is happening in a picture or book when asked, like “running,” “eating,” or “playing”
+lang-36-4	36	language	Says first name, when asked
+lang-36-5	36	language	Talks well enough for others to understand, most of the time
+cog-36-1	36	cognitive	Draws a circle, when you show him how
+cog-36-2	36	cognitive	Avoids touching hot objects, like a stove, when you warn her
+mov-36-1	36	movement	Strings items together, like large beads or macaroni
+mov-36-2	36	movement	Puts on some clothes by himself, like loose pants or a jacket
+mov-36-3	36	movement	Uses a fork
+se-48-1	48	social_emotional	Pretends to be something else during play (teacher, superhero, dog)
+se-48-2	48	social_emotional	Asks to go play with children if none are around, like “Can I play with Alex?”
+se-48-3	48	social_emotional	Comforts others who are hurt or sad, like hugging a crying friend
+se-48-4	48	social_emotional	Avoids danger, like not jumping from tall heights at the playground
+se-48-5	48	social_emotional	Likes to be a “helper”
+se-48-6	48	social_emotional	Changes behavior based on where she is (place of worship, library, playground)
+lang-48-1	48	language	Says sentences with four or more words
+lang-48-2	48	language	Says some words from a song, story, or nursery rhyme
+lang-48-3	48	language	Talks about at least one thing that happened during her day, like “I played soccer.”
+lang-48-4	48	language	Answers simple questions like “What is a coat for?” or “What is a crayon for?”
+cog-48-1	48	cognitive	Names a few colors of items
+cog-48-2	48	cognitive	Tells what comes next in a well-known story
+cog-48-3	48	cognitive	Draws a person with three or more body parts
+mov-48-1	48	movement	Catches a large ball most of the time
+mov-48-2	48	movement	Serves herself food or pours water, with adult supervision
+mov-48-3	48	movement	Unbuttons some buttons
+mov-48-4	48	movement	Holds crayon or pencil between fingers and thumb (not a fist)
+se-60-1	60	social_emotional	Follows rules or takes turns when playing games with other children
+se-60-2	60	social_emotional	Sings, dances, or acts for you
+se-60-3	60	social_emotional	Does simple chores at home, like matching socks or clearing the table after eating
+lang-60-1	60	language	Tells a story she heard or made up with at least two events. For example, a cat was stuck in a tree and a firefighter saved it
+lang-60-2	60	language	Answers simple questions about a book or story after you read or tell it to him
+lang-60-3	60	language	Keeps a conversation going with more than three back-and-forth exchanges
+lang-60-4	60	language	Uses or recognizes simple rhymes (bat-cat, ball-tall)
+cog-60-1	60	cognitive	Counts to 10
+cog-60-2	60	cognitive	Names some numbers between 1 and 5 when you point to them
+cog-60-3	60	cognitive	Uses words about time, like “yesterday,” “tomorrow,” “morning,” or “night”
+cog-60-4	60	cognitive	Pays attention for 5 to 10 minutes during activities. For example, during story time or making arts and crafts (screen time does not count)
+cog-60-5	60	cognitive	Writes some letters in her name
+cog-60-6	60	cognitive	Names some letters when you point to them
+mov-60-1	60	movement	Buttons some buttons
+mov-60-2	60	movement	Hops on one foot

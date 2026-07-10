@@ -9,6 +9,7 @@ pub mod import;
 pub mod incident;
 pub mod insurance;
 pub mod layout;
+pub mod milestones;
 pub mod provider;
 pub mod record;
 pub mod reminders;
