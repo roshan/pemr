@@ -270,10 +270,38 @@ pub fn hx_nav_button(label: impl Render, url: &str, target: &str, enabled: bool)
 }
 
 /// One milestone checklist row — a bordered list item. The view fills `body`
-/// (usually a per-milestone `<form>` with the response controls).
+/// with the response controls.
 pub fn milestone_row(body: Markup) -> Markup {
     html! {
         li class="py-2 border-b border-line last:border-0" { (body) }
+    }
+}
+
+/// A milestone response button (Yes / Not yet / No). The response is encoded in
+/// the POST **URL** (not a form field) — htmx serializes forms with
+/// `new FormData(form)`, which drops submit-button values, so a shared-form +
+/// submit-button design would never send the response. This posts a bodyless
+/// request to a path that carries the answer, and swaps the checklist back in.
+pub fn milestone_mark_button(label: impl Render, url: &str, active: bool) -> Markup {
+    let variant = if active {
+        " bg-brand text-white hover:bg-indigo-700"
+    } else {
+        " border border-line bg-surface text-ink hover:bg-slate-50"
+    };
+    html! {
+        button type="button" hx-post=(url) hx-target="#milestone-checklist" hx-swap="outerHTML"
+            class={(BTN_BASE) (variant)} { (label) }
+    }
+}
+
+/// The observed-on date editor shown on a milestone marked "yes". It carries its
+/// OWN value (htmx includes a triggering input's `name=value`), so changing the
+/// date posts `observed_on` and saves immediately — no separate submit button.
+pub fn milestone_observed_input(value: &str, url: &str) -> Markup {
+    html! {
+        input type="date" name="observed_on" value=(value)
+            hx-post=(url) hx-trigger="change" hx-target="#milestone-checklist" hx-swap="outerHTML"
+            class="rounded-md border border-line px-2 py-1 text-sm text-ink bg-surface";
     }
 }
 

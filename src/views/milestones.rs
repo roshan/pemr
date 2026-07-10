@@ -76,7 +76,7 @@ pub fn checklist(
                     }
                     ul {
                         @for m in &items {
-                            (c::milestone_row(row_form(subject_id, checkpoint, m, map.get(m.key).copied())))
+                            (c::milestone_row(row_controls(subject_id, checkpoint, m, map.get(m.key).copied())))
                         }
                     }
                 }
@@ -85,37 +85,39 @@ pub fn checklist(
     }
 }
 
-/// One milestone's mark form: three response buttons, plus (once "yes") an
-/// editable observed-on date. Submitting posts the response + checkpoint (+ any
-/// edited observed date), and the handler swaps the whole checklist back in.
-fn row_form(
+/// One milestone's response controls: three buttons (the answer is encoded in
+/// each button's POST URL — see `components::milestone_mark_button`), plus (once
+/// "yes") an observed-on date that saves on change. No `<form>` — htmx's
+/// `new FormData(form)` drops submit-button values, so a shared form would never
+/// send the response.
+fn row_controls(
     subject_id: Uuid,
     checkpoint: i32,
     m: &Milestone,
     resp: Option<&MilestoneResponse>,
 ) -> Markup {
     let cur = resp.map(|r| r.response.as_str());
-    let mark_url = format!("/subjects/{subject_id}/milestones/mark/{}", m.key);
+    let mark = |r: &str| {
+        format!("/subjects/{subject_id}/milestones/mark/{}/{r}?checkpoint={checkpoint}", m.key)
+    };
+    let observed_url =
+        format!("/subjects/{subject_id}/milestones/observed/{}?checkpoint={checkpoint}", m.key);
     html! {
-        form hx-post=(mark_url) hx-target="#milestone-checklist" hx-swap="outerHTML" {
-            input type="hidden" name="checkpoint" value=(checkpoint);
-            div class="flex items-start justify-between gap-3" {
-                span class="text-sm text-ink" { (m.text) }
-                div class="flex gap-1 shrink-0" {
-                    (c::submit_action("response", "yes", "Yes", cur == Some("yes")))
-                    (c::submit_action("response", "not_yet", "Not yet", cur == Some("not_yet")))
-                    (c::submit_action("response", "no", "No", cur == Some("no")))
-                }
+        div class="flex items-start justify-between gap-3" {
+            span class="text-sm text-ink" { (m.text) }
+            div class="flex gap-1 shrink-0" {
+                (c::milestone_mark_button("Yes", &mark("yes"), cur == Some("yes")))
+                (c::milestone_mark_button("Not yet", &mark("not_yet"), cur == Some("not_yet")))
+                (c::milestone_mark_button("No", &mark("no"), cur == Some("no")))
             }
-            @if cur == Some("yes") {
-                div class="mt-2 flex items-center gap-2" {
-                    span class="text-xs text-muted" { "First observed" }
-                    (c::timeline_date_input(
-                        "observed_on",
-                        &resp.and_then(|r| r.observed_on).map(|d| d.to_string()).unwrap_or_default(),
-                    ))
-                    (c::submit_action("response", "yes", "Save date", false))
-                }
+        }
+        @if cur == Some("yes") {
+            div class="mt-2 flex items-center gap-2" {
+                span class="text-xs text-muted" { "First observed" }
+                (c::milestone_observed_input(
+                    &resp.and_then(|r| r.observed_on).map(|d| d.to_string()).unwrap_or_default(),
+                    &observed_url,
+                ))
             }
         }
     }
@@ -133,17 +135,21 @@ fn act_early_body() -> Markup {
     }
 }
 
-/// The inline milestone module (feature surface). `inner` is the checklist (or a
-/// "set DOB" notice). Shows the disclaimer, the optional age-basis chip, the
-/// passive Act Early disclosure, links to the progress + printable-summary pages,
-/// and a Remove control (disable the feature; data is preserved).
-pub fn module(subject: &Subject, tracker: Option<TrackerAge>, inner: Markup) -> Markup {
+/// The compact milestone surface on the subject chart (feature area): current
+/// checkpoint + per-checkpoint completion, the required disclaimer in brief, a
+/// link to the full detail page, and a Remove control (disable the feature; data
+/// is preserved). The interactive checklist lives on the detail page, not here.
+pub fn summary_card(
+    subject: &Subject,
+    tracker: Option<TrackerAge>,
+    met: usize,
+    total: usize,
+) -> Markup {
     let sid = subject.id;
     c::card(html! {
-        div class="flex flex-wrap items-baseline justify-between gap-2 mb-2" {
+        div class="flex flex-wrap items-baseline justify-between gap-2 mb-1" {
             div class="flex flex-wrap items-baseline gap-2" {
                 (c::section_heading("Developmental milestones"))
-                (c::muted("CDC \u{201c}Learn the Signs. Act Early.\u{201d}"))
                 @if let Some(t) = tracker { (c::badge_neutral(t.basis.label())) }
             }
             (c::hx_action_button(
@@ -153,19 +159,58 @@ pub fn module(subject: &Subject, tracker: Option<TrackerAge>, inner: Markup) -> 
                 true,
             ))
         }
+        @match tracker {
+            Some(t) => {
+                div class="flex flex-wrap items-center justify-between gap-2" {
+                    span class="text-sm text-muted" {
+                        "Checklist by " span class="text-ink" { (milestone_age::fmt_months(t.checkpoint)) }
+                    }
+                    (c::progress_meter(met, total))
+                }
+            }
+            None => div class="mb-1" {
+                (c::alert_info("Set this child\u{2019}s date of birth to use the milestone tracker."))
+            }
+        }
+        p class="text-xs text-muted mt-2" { (milestones::DISCLAIMER) }
+        div class="mt-3 flex flex-wrap gap-2" {
+            (c::button_link_secondary(format!("/subjects/{sid}/milestones"), "Open milestones \u{2192}"))
+        }
+    })
+}
+
+/// The dedicated milestone detail page (`/subjects/{id}/milestones`): the full
+/// interactive checklist, the disclaimer, the passive Act Early disclosure, and
+/// links to the progress + printable-summary pages. `inner` is the checklist (or
+/// a "set DOB" notice).
+pub fn detail_page(
+    nav: &Nav<'_>,
+    subject: &Subject,
+    tracker: Option<TrackerAge>,
+    inner: Markup,
+) -> Markup {
+    let sid = subject.id;
+    let body = html! {
+        (c::page_title(format!("{} \u{2014} developmental milestones", subject.full_name)))
+        div class="flex flex-wrap items-center gap-2 mb-3" {
+            (c::button_link_secondary(format!("/subjects/{sid}"), "\u{2190} Back to chart"))
+            (c::muted("CDC \u{201c}Learn the Signs. Act Early.\u{201d}"))
+            @if let Some(t) = tracker { (c::badge_neutral(t.basis.label())) }
+        }
         div class="mb-2" { (c::alert_info(milestones::DISCLAIMER)) }
         div class="mb-2" {
             (c::collapse_section(milestones::ACT_EARLY_HEADING, act_early_body(), false))
         }
-        div class="flex flex-wrap gap-2 mb-3" {
+        div class="flex flex-wrap gap-2 mb-4" {
             (c::button_link_secondary(format!("/subjects/{sid}/milestones/progress"), "Progress view"))
             (c::button_link_secondary(format!("/subjects/{sid}/milestones/summary"), "Printable summary"))
         }
         (inner)
-    })
+    };
+    shell(nav, body)
 }
 
-/// Shown inside the module when the subject has no DOB — the checklist needs an
+/// Shown on the detail page when the subject has no DOB — the checklist needs an
 /// age to compute the checkpoint. No nag, just a pointer to set it.
 pub fn needs_dob(subject: &Subject) -> Markup {
     html! {

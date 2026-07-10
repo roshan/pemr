@@ -180,12 +180,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // return HTMX partials; progress + summary are full pages. Feature-gated
         // surfaces, so these stay explicit sub-actions (not `subject_pages`).
         .route(
+            "/subjects/{id}/milestones",
+            get(handlers::milestones::detail),
+        )
+        .route(
             "/subjects/{id}/milestones/checklist",
             get(handlers::milestones::checklist),
         )
         .route(
-            "/subjects/{id}/milestones/mark/{key}",
+            "/subjects/{id}/milestones/mark/{key}/{response}",
             post(handlers::milestones::mark),
+        )
+        .route(
+            "/subjects/{id}/milestones/observed/{key}",
+            post(handlers::milestones::set_observed),
         )
         .route(
             "/subjects/{id}/milestones/progress",

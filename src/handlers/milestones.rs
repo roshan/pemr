@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::handlers::{AppState, load_subjects};
-use crate::models::{MilestoneResponse, Subject, empty_to_none, parse_date};
+use crate::models::{MilestoneResponse, Subject, parse_date};
 use crate::viewer::ViewerContext;
 use crate::views::layout::Nav;
 use crate::{feature_registry, milestone_age, milestones, peds, views};
@@ -40,18 +40,32 @@ fn tracker_for(s: &Subject) -> Option<milestone_age::TrackerAge> {
         .map(|dob| milestone_age::tracker_age(dob, s.gestational_age_weeks, peds::today()))
 }
 
-/// The rendered milestone feature surface (inline module): checklist for the
-/// computed checkpoint, or a "set DOB" notice.
-async fn milestone_module(pool: &sqlx::PgPool, s: &Subject) -> AppResult<Markup> {
+/// Milestones marked "yes" out of the total, at one checkpoint.
+fn checkpoint_stats(checkpoint: i32, responses: &[MilestoneResponse]) -> (usize, usize) {
+    let items = milestones::by_checkpoint(checkpoint);
+    let met = items
+        .iter()
+        .filter(|m| {
+            responses
+                .iter()
+                .any(|r| r.milestone_key == m.key && r.response == "yes")
+        })
+        .count();
+    (met, items.len())
+}
+
+/// The compact milestone surface for the chart feature area: current checkpoint +
+/// completion, linking to the detail page. The interactive checklist is NOT here.
+async fn milestone_summary_card(pool: &sqlx::PgPool, s: &Subject) -> AppResult<Markup> {
     let tracker = tracker_for(s);
-    let inner = match tracker {
+    let (met, total) = match tracker {
         Some(t) => {
             let responses = load_responses(pool, s.id).await?;
-            views::milestones::checklist(s.id, t.checkpoint, Some(t.checkpoint), &responses)
+            checkpoint_stats(t.checkpoint, &responses)
         }
-        None => views::milestones::needs_dob(s),
+        None => (0, 0),
     };
-    Ok(views::milestones::module(s, tracker, inner))
+    Ok(views::milestones::summary_card(s, tracker, met, total))
 }
 
 /// Render the `#subject-features` area: every enabled feature's surface + the
@@ -61,13 +75,42 @@ pub async fn render_feature_area(pool: &sqlx::PgPool, s: &Subject) -> AppResult<
     let mut surfaces: Vec<Markup> = Vec::new();
     for key in &enabled {
         match key.as_str() {
-            "milestones" => surfaces.push(milestone_module(pool, s).await?),
+            "milestones" => surfaces.push(milestone_summary_card(pool, s).await?),
             // Future features (e.g. growth, PEMR-47) render their surface here.
             _ => {}
         }
     }
     let available = feature_registry::available_to_add(pool, s.id).await?;
     Ok(views::milestones::feature_area(s.id, surfaces, &available))
+}
+
+/// `GET /subjects/{id}/milestones` — the dedicated milestone detail page (the
+/// interactive checklist). Feature-gated surfaces are absent from the chart, but
+/// the page itself renders whatever the subject's DOB implies (a "set DOB" notice
+/// if none), so a direct link/bookmark still works.
+pub async fn detail(
+    State(state): State<AppState>,
+    viewer: ViewerContext,
+    Path(id): Path<Uuid>,
+) -> AppResult<Markup> {
+    let subjects = load_subjects(&state.pool).await?;
+    let s = load_subject(&state.pool, id).await?;
+    let tracker = tracker_for(&s);
+    let inner = match tracker {
+        Some(t) => {
+            let responses = load_responses(&state.pool, id).await?;
+            views::milestones::checklist(id, t.checkpoint, Some(t.checkpoint), &responses)
+        }
+        None => views::milestones::needs_dob(&s),
+    };
+    let nav = Nav {
+        title: &s.full_name,
+        current_path: "/subjects",
+        subjects: &subjects,
+        current_subject: Some(id),
+        viewer: &viewer,
+    };
+    Ok(views::milestones::detail_page(&nav, &s, tracker, inner))
 }
 
 /// `POST /subjects/{id}/features/{key}` — enable a feature (idempotent) and swap
@@ -129,32 +172,16 @@ pub async fn checklist(
     Ok(views::milestones::checklist(id, checkpoint, computed, &responses))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct MarkForm {
-    pub response: String,
-    #[serde(default)]
-    pub observed_on: String,
-    #[serde(default)]
-    pub checkpoint: String,
-    #[serde(default)]
-    pub note: String,
-}
-
-/// `POST /subjects/{id}/milestones/{key}` — record (upsert) a milestone response,
-/// then swap the checklist back in. Captures the point-in-time age snapshot
-/// (basis + chronological age in days) per the queryability spec.
-pub async fn mark(
-    State(state): State<AppState>,
-    Path((id, key)): Path<(Uuid, String)>,
-    Form(f): Form<MarkForm>,
-) -> AppResult<Markup> {
-    if !milestones::RESPONSES.contains(&f.response.as_str()) {
-        return Err(AppError::BadRequest(format!("invalid response: {}", f.response)));
-    }
-    let m = milestones::by_key(&key)
-        .ok_or_else(|| AppError::BadRequest(format!("unknown milestone: {key}")))?;
-
-    let s = load_subject(&state.pool, id).await?;
+/// Upsert one milestone response, capturing the point-in-time age snapshot
+/// (basis + chronological age in days) per the queryability spec. `note` is not
+/// touched on update (there's no note UI; the column stays for future/API use).
+async fn upsert_response(
+    pool: &sqlx::PgPool,
+    s: &Subject,
+    m: milestones::Milestone,
+    response: &str,
+    observed_on: Option<time::Date>,
+) -> AppResult<()> {
     // Marking requires a DOB — the age snapshot is part of the record.
     let dob = s
         .dob
@@ -163,19 +190,11 @@ pub async fn mark(
     let tracker = milestone_age::tracker_age(dob, s.gestational_age_weeks, today);
     let chronological_age_days = (today.to_julian_day() - dob.to_julian_day()).max(0);
 
-    // observed_on is meaningful only for a met ("yes") milestone; default to today
-    // when the user didn't pick a date. Cleared for not_yet / no.
-    let observed_on = if f.response == "yes" {
-        Some(parse_date(&f.observed_on).map_err(AppError::BadRequest)?.unwrap_or(today))
-    } else {
-        None
-    };
-
     sqlx::query(
         "insert into milestone_responses
            (id, subject_id, milestone_key, domain, expected_age_months, response,
-            observed_on, age_basis_used, chronological_age_days, note, answered_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
+            observed_on, age_basis_used, chronological_age_days, answered_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
          on conflict (subject_id, milestone_key) do update set
             response = excluded.response,
             domain = excluded.domain,
@@ -183,25 +202,86 @@ pub async fn mark(
             observed_on = excluded.observed_on,
             age_basis_used = excluded.age_basis_used,
             chronological_age_days = excluded.chronological_age_days,
-            note = excluded.note,
             answered_at = now()",
     )
     .bind(Uuid::now_v7())
-    .bind(id)
-    .bind(&key)
+    .bind(s.id)
+    .bind(m.key)
     .bind(m.domain)
     .bind(m.checkpoint_months as i16)
-    .bind(&f.response)
+    .bind(response)
     .bind(observed_on)
     .bind(tracker.basis.as_str())
     .bind(chronological_age_days)
-    .bind(empty_to_none(f.note))
-    .execute(&state.pool)
+    .execute(pool)
     .await?;
+    Ok(())
+}
 
-    // Re-render the same checkpoint the user is looking at.
-    let requested: Option<i32> = f.checkpoint.trim().parse().ok();
-    let (checkpoint, computed) = resolve_checkpoint(&s, requested)?;
+/// `POST /subjects/{id}/milestones/mark/{key}/{response}?checkpoint=N` — record a
+/// yes/not-yet/no answer (the answer is in the URL, so htmx's `new FormData(form)`
+/// submit-button omission can't bite), then swap the checklist back in. For "yes"
+/// the observed date is preserved if already set, else defaults to today; cleared
+/// for not-yet / no.
+pub async fn mark(
+    State(state): State<AppState>,
+    Path((id, key, response)): Path<(Uuid, String, String)>,
+    Query(q): Query<ChecklistQuery>,
+) -> AppResult<Markup> {
+    if !milestones::RESPONSES.contains(&response.as_str()) {
+        return Err(AppError::BadRequest(format!("invalid response: {response}")));
+    }
+    let m = milestones::by_key(&key)
+        .ok_or_else(|| AppError::BadRequest(format!("unknown milestone: {key}")))?;
+    let s = load_subject(&state.pool, id).await?;
+
+    let observed_on = if response == "yes" {
+        // Preserve an existing observed date; otherwise default to today.
+        let existing: Option<time::Date> = sqlx::query_scalar(
+            "select observed_on from milestone_responses where subject_id = $1 and milestone_key = $2",
+        )
+        .bind(id)
+        .bind(&key)
+        .fetch_optional(&state.pool)
+        .await?
+        .flatten();
+        Some(existing.unwrap_or_else(peds::today))
+    } else {
+        None
+    };
+
+    upsert_response(&state.pool, &s, m, &response, observed_on).await?;
+
+    let (checkpoint, computed) = resolve_checkpoint(&s, q.checkpoint)?;
+    let responses = load_responses(&state.pool, id).await?;
+    Ok(views::milestones::checklist(id, checkpoint, computed, &responses))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ObservedForm {
+    #[serde(default)]
+    pub observed_on: String,
+}
+
+/// `POST /subjects/{id}/milestones/observed/{key}?checkpoint=N` — set/edit the
+/// observed-on date for a milestone (implies "yes"). Fired by the date input's
+/// change, which sends its own `observed_on` value. Blank → today.
+pub async fn set_observed(
+    State(state): State<AppState>,
+    Path((id, key)): Path<(Uuid, String)>,
+    Query(q): Query<ChecklistQuery>,
+    Form(f): Form<ObservedForm>,
+) -> AppResult<Markup> {
+    let m = milestones::by_key(&key)
+        .ok_or_else(|| AppError::BadRequest(format!("unknown milestone: {key}")))?;
+    let s = load_subject(&state.pool, id).await?;
+    let observed_on = parse_date(&f.observed_on)
+        .map_err(AppError::BadRequest)?
+        .unwrap_or_else(peds::today);
+
+    upsert_response(&state.pool, &s, m, "yes", Some(observed_on)).await?;
+
+    let (checkpoint, computed) = resolve_checkpoint(&s, q.checkpoint)?;
     let responses = load_responses(&state.pool, id).await?;
     Ok(views::milestones::checklist(id, checkpoint, computed, &responses))
 }
