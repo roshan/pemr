@@ -40,6 +40,17 @@ fn tracker_for(s: &Subject) -> Option<milestone_age::TrackerAge> {
         .map(|dob| milestone_age::tracker_age(dob, s.gestational_age_weeks, peds::today()))
 }
 
+/// Default observed-on date for marking a milestone "yes": the latest date the
+/// child was within that milestone's age `period` (today for the current period).
+/// Falls back to today with no DOB (the upsert rejects a DOB-less mark anyway).
+fn default_observed_date(s: &Subject, period: i32) -> time::Date {
+    let today = peds::today();
+    match s.dob {
+        Some(dob) => milestone_age::latest_date_in_period(dob, s.gestational_age_weeks, period, today),
+        None => today,
+    }
+}
+
 /// Milestones marked "yes" out of the total, at one checkpoint.
 fn checkpoint_stats(checkpoint: i32, responses: &[MilestoneResponse]) -> (usize, usize) {
     let items = milestones::by_checkpoint(checkpoint);
@@ -54,18 +65,25 @@ fn checkpoint_stats(checkpoint: i32, responses: &[MilestoneResponse]) -> (usize,
     (met, items.len())
 }
 
-/// The compact milestone surface for the chart feature area: current checkpoint +
-/// completion, linking to the detail page. The interactive checklist is NOT here.
+/// Per-period completion: `(checkpoint, met, total)` for every checkpoint.
+fn per_period_stats(responses: &[MilestoneResponse]) -> Vec<(i32, usize, usize)> {
+    milestones::CHECKPOINTS
+        .iter()
+        .map(|&cp| {
+            let (met, total) = checkpoint_stats(cp, responses);
+            (cp, met, total)
+        })
+        .collect()
+}
+
+/// The milestone surface for the chart feature area: a foldable per-period
+/// completion card linking to the detail page. The interactive checklist is NOT
+/// here.
 async fn milestone_summary_card(pool: &sqlx::PgPool, s: &Subject) -> AppResult<Markup> {
     let tracker = tracker_for(s);
-    let (met, total) = match tracker {
-        Some(t) => {
-            let responses = load_responses(pool, s.id).await?;
-            checkpoint_stats(t.checkpoint, &responses)
-        }
-        None => (0, 0),
-    };
-    Ok(views::milestones::summary_card(s, tracker, met, total))
+    let responses = load_responses(pool, s.id).await?;
+    let per_period = per_period_stats(&responses);
+    Ok(views::milestones::summary_card(s, tracker, &per_period))
 }
 
 /// Render the `#subject-features` area: every enabled feature's surface + the
@@ -236,7 +254,8 @@ pub async fn mark(
     let s = load_subject(&state.pool, id).await?;
 
     let observed_on = if response == "yes" {
-        // Preserve an existing observed date; otherwise default to today.
+        // Preserve an existing observed date; otherwise default to the latest date
+        // in this milestone's age period (today for the current period).
         let existing: Option<time::Date> = sqlx::query_scalar(
             "select observed_on from milestone_responses where subject_id = $1 and milestone_key = $2",
         )
@@ -245,7 +264,7 @@ pub async fn mark(
         .fetch_optional(&state.pool)
         .await?
         .flatten();
-        Some(existing.unwrap_or_else(peds::today))
+        Some(existing.unwrap_or_else(|| default_observed_date(&s, m.checkpoint_months)))
     } else {
         None
     };
@@ -277,7 +296,7 @@ pub async fn set_observed(
     let s = load_subject(&state.pool, id).await?;
     let observed_on = parse_date(&f.observed_on)
         .map_err(AppError::BadRequest)?
-        .unwrap_or_else(peds::today);
+        .unwrap_or_else(|| default_observed_date(&s, m.checkpoint_months));
 
     upsert_response(&state.pool, &s, m, "yes", Some(observed_on)).await?;
 

@@ -120,6 +120,61 @@ pub fn tracker_age(dob: Date, gestational_age_weeks: Option<i16>, today: Date) -
     }
 }
 
+/// Add `n` whole calendar months to a date, clamping the day to the target
+/// month's length (Jan 31 + 1mo → Feb 28/29). Never panics.
+fn add_months(d: Date, n: i32) -> Date {
+    let total = d.year() as i64 * 12 + (u8::from(d.month()) as i64 - 1) + n as i64;
+    let year = total.div_euclid(12) as i32;
+    let month = time::Month::try_from(total.rem_euclid(12) as u8 + 1).unwrap_or(d.month());
+    let day = d.day();
+    // Largest valid day ≤ the source day (handles shorter target months).
+    (1..=day)
+        .rev()
+        .find_map(|dd| Date::from_calendar_date(year, month, dd).ok())
+        .unwrap_or(d)
+}
+
+/// The calendar date on which the child reaches tracker-age `months` — the same
+/// basis `tracker_age` reports (corrected below 24 months for a preterm birth,
+/// else chronological). Used to bound the observed-on date to a checkpoint's age
+/// window.
+fn date_at_tracker_age(dob: Date, gestational_age_weeks: Option<i16>, months: i32) -> Date {
+    let preterm = matches!(gestational_age_weeks, Some(ga) if ga < CORRECTION_THRESHOLD_WEEKS);
+    let base = if preterm && months < CORRECTION_UNTIL_MONTHS {
+        let weeks_premature = (TERM_WEEKS - gestational_age_weeks.unwrap()).max(0) as i32;
+        Date::from_julian_day(dob.to_julian_day() + weeks_premature * 7).unwrap_or(dob)
+    } else {
+        dob
+    };
+    add_months(base, months)
+}
+
+/// The latest calendar date on which the child is still within `checkpoint`'s age
+/// window — i.e. the day before they reach the next checkpoint's age — capped at
+/// `today` (never a future date). For the final checkpoint (open-ended) it's just
+/// `today`. This is the sensible default observed-on date when marking a
+/// milestone "yes": for the current period it lands on today; for an earlier
+/// period it lands on the end of that period.
+pub fn latest_date_in_period(
+    dob: Date,
+    gestational_age_weeks: Option<i16>,
+    checkpoint: i32,
+    today: Date,
+) -> Date {
+    let next = crate::milestones::CHECKPOINTS
+        .iter()
+        .copied()
+        .find(|&c| c > checkpoint);
+    let end = match next {
+        Some(n) => {
+            let start_of_next = date_at_tracker_age(dob, gestational_age_weeks, n);
+            Date::from_julian_day(start_of_next.to_julian_day() - 1).unwrap_or(start_of_next)
+        }
+        None => today,
+    };
+    end.min(today)
+}
+
 /// Format a completed-month age as a short human string ("9 months",
 /// "2 years 1 month", "3 years").
 pub fn fmt_months(months: i32) -> String {
@@ -234,6 +289,33 @@ mod tests {
         assert_eq!(a.basis, AgeBasis::Corrected);
         assert_eq!(a.computed_months, 0);
         assert_eq!(a.checkpoint, 2);
+    }
+
+    #[test]
+    fn latest_date_in_period_bounds_to_period_end_or_today() {
+        // Term child born 2025-01-01; "today" is well past the 2-month period.
+        let dob = date!(2025 - 01 - 01);
+        let today = date!(2026 - 07 - 10);
+        // 2-month period ends the day before the 4-month checkpoint (2025-05-01).
+        let d = latest_date_in_period(dob, None, 2, today);
+        assert_eq!(d, date!(2025 - 04 - 30));
+        // The current period (child is ~18 months) caps at today, not a future date.
+        let cur = latest_date_in_period(dob, None, 18, today);
+        assert_eq!(cur, today);
+        // The final checkpoint is open-ended → today.
+        assert_eq!(latest_date_in_period(dob, None, 60, today), today);
+    }
+
+    #[test]
+    fn latest_date_in_period_uses_corrected_basis_for_preterm() {
+        // 32-week preemie (8 weeks premature). The 6-month CORRECTED period ends
+        // the day before corrected age 9mo, i.e. later in calendar time than a
+        // term child's 9-month date.
+        let dob = date!(2024 - 07 - 01);
+        let today = date!(2026 - 07 - 10);
+        let preemie = latest_date_in_period(dob, Some(32), 6, today);
+        let term = latest_date_in_period(dob, None, 6, today);
+        assert!(preemie > term, "corrected period end should be later than chronological");
     }
 
     #[test]

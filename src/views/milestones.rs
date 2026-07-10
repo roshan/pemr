@@ -135,23 +135,57 @@ fn act_early_body() -> Markup {
     }
 }
 
-/// The compact milestone surface on the subject chart (feature area): current
-/// checkpoint + per-checkpoint completion, the required disclaimer in brief, a
-/// link to the full detail page, and a Remove control (disable the feature; data
-/// is preserved). The interactive checklist lives on the detail page, not here.
+/// The milestone surface on the subject chart (feature area): a **foldable card**
+/// whose body is a **per-period completion** breakdown (every checkpoint 2mo–5y
+/// with a met/total meter, the current age flagged), plus the required
+/// disclaimer, a link to the full detail page, and a Remove control. The
+/// interactive checklist lives on the detail page, not here. `per_period` is
+/// `(checkpoint_months, met, total)` for each checkpoint, in order.
 pub fn summary_card(
     subject: &Subject,
     tracker: Option<TrackerAge>,
-    met: usize,
-    total: usize,
+    per_period: &[(i32, usize, usize)],
 ) -> Markup {
     let sid = subject.id;
-    c::card(html! {
-        div class="flex flex-wrap items-baseline justify-between gap-2 mb-1" {
-            div class="flex flex-wrap items-baseline gap-2" {
-                (c::section_heading("Developmental milestones"))
+    let current = tracker.map(|t| t.checkpoint);
+    let (cur_met, cur_total) = current
+        .and_then(|cp| per_period.iter().find(|(c, _, _)| *c == cp))
+        .map(|(_, m, t)| (*m, *t))
+        .unwrap_or((0, 0));
+
+    let summary = html! {
+        div class="flex flex-wrap items-center justify-between gap-2" {
+            div class="flex items-center gap-2" {
+                span { "Developmental milestones" }
                 @if let Some(t) = tracker { (c::badge_neutral(t.basis.label())) }
             }
+            @if let Some(cp) = current {
+                span class="text-xs text-muted font-normal" {
+                    "Current " (milestone_age::fmt_months(cp)) " \u{00b7} " (cur_met) "/" (cur_total)
+                }
+            }
+        }
+    };
+    let body = html! {
+        @match tracker {
+            Some(_) => {
+                div class="space-y-1" {
+                    @for (cp, met, total) in per_period {
+                        div class="flex items-center justify-between gap-2" {
+                            span class="text-sm text-ink" {
+                                (milestone_age::fmt_months(*cp))
+                                @if current == Some(*cp) { " " (c::badge_neutral("current")) }
+                            }
+                            (c::progress_meter(*met, *total))
+                        }
+                    }
+                }
+            }
+            None => (c::alert_info("Set this child\u{2019}s date of birth to use the milestone tracker.")),
+        }
+        p class="text-xs text-muted mt-3" { (milestones::DISCLAIMER) }
+        div class="mt-3 flex flex-wrap gap-2" {
+            (c::button_link_secondary(format!("/subjects/{sid}/milestones"), "Open milestones \u{2192}"))
             (c::hx_action_button(
                 "Remove",
                 &format!("/subjects/{sid}/features/milestones/remove"),
@@ -159,24 +193,8 @@ pub fn summary_card(
                 true,
             ))
         }
-        @match tracker {
-            Some(t) => {
-                div class="flex flex-wrap items-center justify-between gap-2" {
-                    span class="text-sm text-muted" {
-                        "Checklist by " span class="text-ink" { (milestone_age::fmt_months(t.checkpoint)) }
-                    }
-                    (c::progress_meter(met, total))
-                }
-            }
-            None => div class="mb-1" {
-                (c::alert_info("Set this child\u{2019}s date of birth to use the milestone tracker."))
-            }
-        }
-        p class="text-xs text-muted mt-2" { (milestones::DISCLAIMER) }
-        div class="mt-3 flex flex-wrap gap-2" {
-            (c::button_link_secondary(format!("/subjects/{sid}/milestones"), "Open milestones \u{2192}"))
-        }
-    })
+    };
+    c::foldable_card(summary, body, true)
 }
 
 /// The dedicated milestone detail page (`/subjects/{id}/milestones`): the full

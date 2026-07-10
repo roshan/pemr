@@ -320,6 +320,22 @@ pub fn hx_action_button(label: impl Render, url: &str, target: &str, danger: boo
     }
 }
 
+/// A foldable card — a `<details>`/`<summary>` disclosure styled as a card.
+/// Unlike `collapse_section`, the summary accepts arbitrary `Markup` (so it can
+/// carry a badge / inline stat), and it has the card's border + shadow. Put
+/// interactive controls (buttons) in `body`, not `summary` — a click inside the
+/// summary also toggles the fold.
+pub fn foldable_card(summary: Markup, body: Markup, open: bool) -> Markup {
+    html! {
+        details open[open] class="rounded-lg border border-line bg-surface shadow-xs" {
+            summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ink" {
+                (summary)
+            }
+            div class="border-t border-line px-4 py-3" { (body) }
+        }
+    }
+}
+
 /// A small progress meter (filled bar) for per-domain milestone completion.
 /// `met`/`total` drive the fill; renders nothing fancy — a labelled bar.
 pub fn progress_meter(met: usize, total: usize) -> Markup {
