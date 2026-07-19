@@ -55,8 +55,15 @@ pub fn routes() -> Vec<ApiRoute> {
         ApiRoute {
             path: "/api/v1/incidents",
             doc_path: None,
-            route: || get(api::incidents::list),
-            docs: &[("GET", "list incidents (?subject=)")],
+            route: || get(api::incidents::list).post(api::incidents::create),
+            docs: &[
+                ("GET", "list incidents (?subject=)"),
+                (
+                    "POST",
+                    "upsert an incident/event (req: subject_id, title); no provenance key — \
+                     dedup is on content: (subject_id, lower(title), occurred_at)",
+                ),
+            ],
         },
         ApiRoute {
             path: "/api/v1/incidents/{id}",
