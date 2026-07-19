@@ -74,8 +74,15 @@ pub fn routes() -> Vec<ApiRoute> {
         ApiRoute {
             path: "/api/v1/records",
             doc_path: None,
-            route: || get(api::records::list),
-            docs: &[("GET", "list records (?subject=&kind=)")],
+            route: || get(api::records::list).post(api::records::create),
+            docs: &[
+                ("GET", "list records (?subject=&kind=)"),
+                (
+                    "POST",
+                    "upsert a record; multipart/form-data (req: subject_id, kind, title; \
+                     optional file part + link_incident); dedup on (source_id, external_id)",
+                ),
+            ],
         },
         ApiRoute {
             path: "/api/v1/records/{id}",

@@ -25,9 +25,10 @@ use crate::handlers::AppState;
 use crate::handlers::api::{ApiError, ApiJson, ApiPath, ApiQuery, ApiResult, validate_in, write_err};
 use crate::models::{DATE_PRECISIONS, Incident, Record, parse_subject_filter};
 
-/// Every column of `incidents`, in `Incident`'s field order. The table has a
-/// generated `search_tsv` column, so `returning *` would hand sqlx a column
-/// `Incident` can't map — project explicitly instead.
+/// Every column of `incidents`, in `Incident`'s field order — the same list the
+/// `select`s above use, so the read and write shapes stay identical. (`*` would
+/// also work: the generated `search_tsv` is simply never decoded, since sqlx's
+/// `FromRow` reads only the columns the struct names. Verified, not assumed.)
 const COLS: &str = "id, subject_id, title, narrative, occurred_at, occurred_precision,
                     ended_at, ended_precision, created_at, updated_at";
 

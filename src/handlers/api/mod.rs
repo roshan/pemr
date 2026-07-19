@@ -8,7 +8,8 @@
 //! The default `AppError` renders HTML, so API handlers use `ApiError`
 //! instead.
 
-use axum::extract::{FromRequest, FromRequestParts, Path, Query, Request};
+use axum::extract::multipart::MultipartError;
+use axum::extract::{FromRequest, FromRequestParts, Multipart, Path, Query, Request};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Json, Response};
@@ -185,6 +186,35 @@ where
             Ok(Json(value)) => Ok(ApiJson(value)),
             Err(rejection) => Err(ApiError::bad_request(rejection.body_text())),
         }
+    }
+}
+
+/// Like `axum::extract::Multipart`, but a non-multipart body (wrong or missing
+/// `Content-Type`) is rejected as a JSON [`ApiError`] instead of axum's
+/// plain-text default. `POST /api/v1/records` is the one write endpoint that
+/// takes bytes rather than JSON, and it still owes callers JSON errors.
+pub struct ApiMultipart(pub Multipart);
+
+impl<S> FromRequest<S> for ApiMultipart
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        match Multipart::from_request(req, state).await {
+            Ok(m) => Ok(ApiMultipart(m)),
+            Err(rejection) => Err(ApiError::bad_request(rejection.body_text())),
+        }
+    }
+}
+
+/// A failure *while streaming* multipart fields (truncated body, malformed
+/// part) — distinct from the extractor rejection above, which fires before any
+/// field is read. Both are the caller's fault, so both are 400.
+impl From<MultipartError> for ApiError {
+    fn from(e: MultipartError) -> Self {
+        ApiError::bad_request(format!("malformed multipart body: {e}"))
     }
 }
 
