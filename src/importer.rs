@@ -1374,7 +1374,7 @@ fn map_immunizations(tables: &Path, out: &mut Vec<(String, CItem)>) {
 /// Growth vitals. The measured value lives in `V_EHI_FLO_MEAS_VALUE` (joined on
 /// `(FSD_ID, LINE)`), NOT in `IP_FLWSHT_MEAS`. We whitelist the real growth
 /// measures, assign canonical growth LOINCs, and convert to the metric units the
-/// CDC growth charts expect (kg / cm — see `handlers::subjects::growth`).
+/// growth charts expect (kg / cm — see `handlers::subjects::growth`).
 fn map_vitals(tables: &Path, out: &mut Vec<(String, CItem)>) {
     let (Some(meas), Some(vals)) =
         (Tsv::open(tables, "IP_FLWSHT_MEAS"), Tsv::open(tables, "V_EHI_FLO_MEAS_VALUE"))

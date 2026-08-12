@@ -72,7 +72,8 @@ Durable project knowledge — overview, API reference, anything an agent would w
 
 | File | Source | Notes |
 |---|---|---|
-| `src/peds_data/cdc_{weight,length,headcirc}_for_age_0_36mo.csv` | CDC growth-chart LMS data files (`cdc.gov/growthcharts/data/zscore/{wtageinf,lenageinf,hcageinf}.csv`) | Public domain (US gov). `include_str!`-embedded by `growth_ref.rs` for growth percentile bands. CDC 0–36 mo infant charts (carry precomputed P3–P97 columns). |
+| `src/peds_data/who_{weight,length,headcirc}_for_age_0_24mo_{boys,girls}.csv` | WHO Child Growth Standards, CDC-hosted US data files (`ftp.cdc.gov/pub/Health_Statistics/NCHS/growthcharts/WHO-{Boys,Girls}-{Weight,Length,Head-Circumference}-for-age*Percentiles.csv`) | Public domain (US gov hosting of WHO tables). `include_str!`-embedded by `growth_ref.rs`. **The 0–24 mo reference** — US standard-of-care for under-2s (WHO standard = breastfed-optimal growth; the CDC infant reference's formula-fed cohort skews infant percentiles). Monthly LMS rows + precomputed P2.3–P97.7 columns, one file per sex. |
+| `src/peds_data/cdc_{weight,length,headcirc}_for_age_0_36mo.csv` | CDC growth-chart LMS data files (`cdc.gov/growthcharts/data/zscore/{wtageinf,lenageinf,hcageinf}.csv`) | Public domain (US gov). `include_str!`-embedded by `growth_ref.rs`. CDC 0–36 mo infant charts (precomputed P3–P97 columns); **only rows past 24 mo are used** — `growth_ref::curve` splices WHO 0–24 + CDC 24–36 (the visible band step at 24 mo is the real WHO→CDC handoff). |
 | `src/peds_data/cdc_ltsae_milestones_2022.tsv` | CDC "Learn the Signs. Act Early." (LTSAE) developmental milestone checklists, 2022 revision (`cdc.gov/act-early/milestones`) | Public domain (US gov). `include_str!`-embedded by `milestones.rs` (PEMR-35). 159 milestones × 12 checkpoints (2mo–5y) × 4 domains (TSV: `milestone_key`, `checkpoint_months`, `domain`, `text`). CDC text only — **no AAP-branded media, no commercial app photos/videos**. |
 
 ## DICOM import

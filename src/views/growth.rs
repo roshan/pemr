@@ -1,8 +1,9 @@
 //! Growth charts (PEMR-24). Plots the subject's weight / length /
-//! head-circumference by AGE (months) with **CDC P5/P50/P95 percentile bands**
-//! overlaid (from the vendored CDC LMS tables, see [`crate::growth_ref`]).
-//! Bands require the subject's DOB (for age) and sex_at_birth; without sex we
-//! draw the measured trend alone.
+//! head-circumference by AGE (months) with **P5/P50/P95 percentile bands**
+//! overlaid — WHO Child Growth Standards to 24 mo, CDC infant charts 24–36 mo
+//! (from the vendored LMS tables, see [`crate::growth_ref`]). Bands require
+//! the subject's DOB (for age) and sex_at_birth; without sex we draw the
+//! measured trend alone.
 
 use maud::{Markup, html};
 use uuid::Uuid;
@@ -16,8 +17,8 @@ pub struct GrowthPoint {
     pub age_months: f64,
     pub value: f64,
     pub date: time::Date,
-    /// Exact CDC percentile at this age (LMS method), when DOB + sex + the
-    /// table's 0–36 mo range allow.
+    /// Exact percentile at this age (LMS method; WHO under 24 mo, CDC beyond),
+    /// when DOB + sex + the table's 0–36 mo range allow.
     pub percentile: Option<f64>,
 }
 
@@ -25,7 +26,8 @@ pub struct GrowthSeries {
     pub label: &'static str,
     pub unit: &'static str,
     pub points: Vec<GrowthPoint>,
-    /// CDC P5/P50/P95 curve for this measure + sex (empty if sex unknown).
+    /// WHO/CDC-spliced P5/P50/P95 curve for this measure + sex (empty if sex
+    /// unknown).
     pub reference: Vec<RefPoint>,
 }
 
@@ -165,8 +167,8 @@ fn line_chart(s: &GrowthSeries) -> Markup {
     c::summary_panel(html! { (s.label) " " (c::muted(s.unit)) }, body)
 }
 
-/// Compact growth card for the subject chart: the weight-for-age curve with CDC
-/// bands, the latest value of each measure, linked to the full charts.
+/// Compact growth card for the subject chart: the weight-for-age curve with
+/// WHO/CDC bands, the latest value of each measure, linked to the full charts.
 pub fn mini_card(subject_id: Uuid, series: &[GrowthSeries]) -> Markup {
     let weight = series.iter().find(|s| s.label == "Weight");
     let latest = |label: &str| -> Option<String> {
@@ -195,7 +197,7 @@ pub fn mini_card(subject_id: Uuid, series: &[GrowthSeries]) -> Markup {
     )
 }
 
-/// A small SVG (no axis labels) of one measure vs. its CDC bands — for `mini_card`.
+/// A small SVG (no axis labels) of one measure vs. its WHO/CDC bands — for `mini_card`.
 fn mini_chart(s: &GrowthSeries) -> Markup {
     const W: f64 = 300.0;
     const H: f64 = 120.0;
@@ -269,16 +271,16 @@ pub fn page(
         div class="mt-4 space-y-4" {
             @if !has_dob {
                 (c::alert_info("Set this subject's date of birth to plot growth by age and overlay \
-                    CDC percentile bands."))
+                    percentile bands."))
             } @else {
                 @for s in series { (line_chart(s)) }
                 @if has_sex {
-                    (c::alert_info("Bands are CDC P5 / P50 / P95 for age (0–36 mo infant charts; \
-                        dashed = median). Measured points plotted by age in months. CDC data is public \
-                        domain; US standard-of-care is WHO for 0–24 mo."))
+                    (c::alert_info("Bands are P5 / P50 / P95 for age (dashed = median): WHO Child \
+                        Growth Standards to 24 mo — the US standard-of-care for under-2s — then CDC \
+                        charts to 36 mo. Measured points plotted by age in months."))
                 } @else {
                     (c::alert_info("Showing measured trend by age. Set this subject's sex at birth to \
-                        overlay CDC percentile bands."))
+                        overlay percentile bands."))
                 }
             }
         }
