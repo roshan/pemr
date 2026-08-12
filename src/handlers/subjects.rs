@@ -297,6 +297,24 @@ pub async fn immunizations(
 
 /// Build weight/length/head-circ growth series for a subject (empty if no DOB).
 /// Shared by the full growth page and the subject-chart mini card.
+/// Growth storage is canonical (kg / cm) — imports convert at write time — but the
+/// manual entry form and `POST /api/v1/observations` accept a free-text unit, so a
+/// `2500 g` or `22 lb` row can land. Convert the common non-canonical units here
+/// rather than plotting the raw number against the wrong axis; unknown units pass
+/// through unchanged.
+fn to_canonical_unit(value: f64, unit: Option<&str>, target: &str) -> f64 {
+    let u = unit.unwrap_or("").trim().to_ascii_lowercase();
+    match (target, u.as_str()) {
+        ("kg", "g" | "gram" | "grams") => value / 1000.0,
+        ("kg", "lb" | "lbs" | "pound" | "pounds") => value * 0.453_592_37,
+        ("kg", "oz") => value * 0.028_349_523,
+        ("cm", "in" | "inch" | "inches") => value * 2.54,
+        ("cm", "mm") => value / 10.0,
+        ("cm", "m") => value * 100.0,
+        _ => value,
+    }
+}
+
 pub(crate) async fn growth_series(
     pool: &sqlx::PgPool,
     s: &Subject,
@@ -308,9 +326,10 @@ pub(crate) async fn growth_series(
         pool: &sqlx::PgPool,
         subject: Uuid,
         code: &str,
+        target_unit: &str,
     ) -> Result<Vec<(time::Date, f64)>, sqlx::Error> {
-        sqlx::query_as::<_, (time::Date, f64)>(
-            "select effective_on, value_num::float8
+        let rows = sqlx::query_as::<_, (time::Date, f64, Option<String>)>(
+            "select effective_on, value_num::float8, unit
                from observations
               where subject_id = $1 and code = $2 and value_num is not null
               order by effective_on asc",
@@ -318,7 +337,11 @@ pub(crate) async fn growth_series(
         .bind(subject)
         .bind(code)
         .fetch_all(pool)
-        .await
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(d, v, u)| (d, to_canonical_unit(v, u.as_deref(), target_unit)))
+            .collect())
     }
 
     let sex = growth_ref::sex_code(s.sex_at_birth.as_deref());
@@ -335,7 +358,7 @@ pub(crate) async fn growth_series(
         ("Length / height", "cm", "8302-2", Measure::Length),
         ("Head circumference", "cm", "9843-4", Measure::HeadCirc),
     ] {
-        let points = to_age(raw(pool, s.id, code).await?);
+        let points = to_age(raw(pool, s.id, code, unit).await?);
         let reference = match sex {
             Some(sx) => growth_ref::curve(measure, sx),
             None => Vec::new(),
@@ -437,4 +460,21 @@ pub async fn edit(
     .execute(&state.pool)
     .await?;
     Ok(Redirect::to(&format!("/subjects/{id}")).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::to_canonical_unit;
+
+    #[test]
+    fn growth_units_normalize_to_canonical() {
+        assert_eq!(to_canonical_unit(2500.0, Some("g"), "kg"), 2.5);
+        assert!((to_canonical_unit(22.0, Some("lb"), "kg") - 9.979).abs() < 0.001);
+        assert!((to_canonical_unit(160.0, Some("oz"), "kg") - 4.536).abs() < 0.001);
+        assert_eq!(to_canonical_unit(20.0, Some("in"), "cm"), 50.8);
+        // Canonical, absent, and unknown units pass through untouched.
+        assert_eq!(to_canonical_unit(9.2, Some("kg"), "kg"), 9.2);
+        assert_eq!(to_canonical_unit(9.2, None, "kg"), 9.2);
+        assert_eq!(to_canonical_unit(9.2, Some("stone"), "kg"), 9.2);
+    }
 }
