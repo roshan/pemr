@@ -320,7 +320,7 @@ pub(crate) async fn growth_series(
     s: &Subject,
 ) -> Result<Vec<crate::views::growth::GrowthSeries>, sqlx::Error> {
     use crate::growth_ref::{self, Measure};
-    use crate::views::growth::GrowthSeries;
+    use crate::views::growth::{GrowthPoint, GrowthSeries};
 
     async fn raw(
         pool: &sqlx::PgPool,
@@ -348,21 +348,28 @@ pub(crate) async fn growth_series(
     let mut series: Vec<GrowthSeries> = Vec::new();
     let Some(dob) = s.dob else { return Ok(series) };
     let dob_jd = dob.to_julian_day();
-    let to_age = |rows: Vec<(time::Date, f64)>| -> Vec<(f64, f64)> {
-        rows.into_iter()
-            .map(|(d, v)| ((d.to_julian_day() - dob_jd) as f64 / 30.4375, v))
-            .collect()
-    };
     for (label, unit, code, measure) in [
         ("Weight", "kg", "29463-7", Measure::Weight),
         ("Length / height", "cm", "8302-2", Measure::Length),
         ("Head circumference", "cm", "9843-4", Measure::HeadCirc),
     ] {
-        let points = to_age(raw(pool, s.id, code, unit).await?);
         let reference = match sex {
             Some(sx) => growth_ref::curve(measure, sx),
             None => Vec::new(),
         };
+        let points: Vec<GrowthPoint> = raw(pool, s.id, code, unit)
+            .await?
+            .into_iter()
+            .map(|(d, v)| {
+                let age_months = (d.to_julian_day() - dob_jd) as f64 / 30.4375;
+                GrowthPoint {
+                    age_months,
+                    value: v,
+                    date: d,
+                    percentile: growth_ref::percentile(&reference, age_months, v),
+                }
+            })
+            .collect();
         series.push(GrowthSeries { label, unit, points, reference });
     }
     Ok(series)
