@@ -14,6 +14,11 @@ pub struct SubjectPage {
     pub slug: &'static str,
     /// The secondary-button label on the subject chart.
     pub label: &'static str,
+    /// When set, this page is a per-subject opt-in feature module's secondary
+    /// surface (`feature_registry`): the button only shows and the handler
+    /// serves the route when the subject has the feature enabled. `None` pages
+    /// are always available.
+    pub feature_key: Option<&'static str>,
     /// The page's method router — GET, plus POST where the page also submits.
     pub route: fn() -> MethodRouter<AppState>,
 }
@@ -24,16 +29,19 @@ pub fn pages() -> Vec<SubjectPage> {
         SubjectPage {
             slug: "summary",
             label: "Summary (print)",
+            feature_key: None,
             route: || get(handlers::subjects::summary),
         },
         SubjectPage {
             slug: "appointments",
             label: "Appointments",
+            feature_key: None,
             route: || get(handlers::appointments::list).post(handlers::appointments::create),
         },
         SubjectPage {
             slug: "immunizations",
             label: "Immunizations",
+            feature_key: None,
             route: || {
                 get(handlers::subjects::immunizations).post(handlers::clinical::add_immunization)
             },
@@ -41,26 +49,31 @@ pub fn pages() -> Vec<SubjectPage> {
         SubjectPage {
             slug: "vitals",
             label: "Vitals & labs",
+            feature_key: None,
             route: || get(handlers::subjects::vitals_labs),
         },
         SubjectPage {
             slug: "care-team",
             label: "Care team & IDs",
+            feature_key: None,
             route: || get(handlers::care_team::page).post(handlers::care_team::add_provider),
         },
         SubjectPage {
             slug: "reminders",
             label: "Reminders",
+            feature_key: None,
             route: || get(handlers::reminders::page).post(handlers::reminders::add),
         },
         SubjectPage {
             slug: "growth",
             label: "Growth charts",
+            feature_key: Some("growth"),
             route: || get(handlers::subjects::growth),
         },
         SubjectPage {
             slug: "edit",
             label: "Edit profile",
+            feature_key: None,
             route: || get(handlers::subjects::edit_form).post(handlers::subjects::edit),
         },
     ]

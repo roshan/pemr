@@ -173,6 +173,9 @@ pub async fn detail(
     // Opt-in per-subject feature modules (PEMR-45): milestones etc. Absent until
     // the viewer adds them from the chart.
     let feature_area = crate::handlers::milestones::render_feature_area(&state.pool, &s).await?;
+    // Which feature modules the subject has enabled — gates the header buttons
+    // (e.g. growth's "Growth charts") exactly like the feature area's surfaces.
+    let enabled_features = crate::feature_registry::enabled_keys(&state.pool, s.id).await?;
     let timeline = crate::handlers::dashboard::load_timeline(&state.pool, Some(id), "1y", None, None).await?;
 
     let nav = Nav {
@@ -191,7 +194,7 @@ pub async fn detail(
         // The chart renders the full clinical summary below; no snapshot needed.
         clinical: None,
     };
-    Ok(subject::dashboard_page(&nav, &s, &cards, &feature_area, &data, &timeline))
+    Ok(subject::dashboard_page(&nav, &s, &cards, &feature_area, &enabled_features, &data, &timeline))
 }
 
 
@@ -376,11 +379,19 @@ pub(crate) async fn growth_series(
 }
 
 /// `/subjects/{id}/growth` — growth trend charts (PEMR-24).
+///
+/// Gated by the per-subject "growth" feature (PEMR-47): the route only serves
+/// the charts when the subject has the feature enabled (on by default only for
+/// Astra, via migration 0020). The header button is hidden on the chart, but a
+/// direct hit must not leak the page either.
 pub async fn growth(
     State(state): State<AppState>,
     viewer: ViewerContext,
     Path(id): Path<Uuid>,
 ) -> AppResult<Markup> {
+    if !crate::feature_registry::is_enabled(&state.pool, id, "growth").await? {
+        return Err(AppError::NotFound);
+    }
     let subjects = load_subjects(&state.pool).await?;
     let s = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
         .bind(id)

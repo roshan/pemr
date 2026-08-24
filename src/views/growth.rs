@@ -168,6 +168,31 @@ fn line_chart(s: &GrowthSeries) -> Markup {
 }
 
 /// Compact growth card for the subject chart: the weight-for-age curve with
+/// The feature-area surface for the "growth" opt-in module (PEMR-47): confirms
+/// the feature is enabled, links to the charts, and offers removal (disable,
+/// never delete — growth observations are untouched).
+pub fn feature_card(subject: &Subject) -> Markup {
+    let sid = subject.id;
+    let body = html! {
+        div class="flex flex-wrap items-center justify-between gap-2" {
+            span { "Growth charts" }
+        }
+        p class="text-xs text-muted mt-2" {
+            "Weight, length/height and head-circumference percentile charts vs. WHO/CDC standards."
+        }
+        div class="mt-3 flex flex-wrap gap-2" {
+            (c::button_link_secondary(format!("/subjects/{sid}/growth"), "Open charts \u{2192}"))
+            (c::hx_action_button(
+                "Remove",
+                &format!("/subjects/{sid}/features/growth/remove"),
+                "#subject-features",
+                true,
+            ))
+        }
+    };
+    c::foldable_card(html! { "Growth charts " (c::badge_neutral("enabled")) }, body, true)
+}
+
 /// WHO/CDC bands, the latest value of each measure, linked to the full charts.
 pub fn mini_card(subject_id: Uuid, series: &[GrowthSeries]) -> Markup {
     let weight = series.iter().find(|s| s.label == "Weight");

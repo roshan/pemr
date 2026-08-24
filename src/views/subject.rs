@@ -67,6 +67,7 @@ pub fn dashboard_page(
     subject: &Subject,
     cards: &[Markup],
     feature_area: &Markup,
+    enabled_features: &[String],
     data: &DashboardData<'_>,
     timeline: &dashboard::TimelineData,
 ) -> Markup {
@@ -74,7 +75,7 @@ pub fn dashboard_page(
     // `timeline_widget` below already covers it (no two timelines on one page).
     let inner = dashboard::body(nav, data, false);
     let body = html! {
-        (bio_header(subject))
+        (bio_header(subject, enabled_features))
         // The clinical summary is an ordered set of self-contained modules
         // (`subject_modules`); this page just lays out whatever cards they
         // produced — it has no per-feature knowledge.
@@ -104,7 +105,7 @@ pub fn dashboard_page(
 }
 
 
-fn bio_header(subject: &Subject) -> Markup {
+fn bio_header(subject: &Subject, enabled_features: &[String]) -> Markup {
     let bio_parts: Vec<Markup> = [
         subject.dob.map(|d| html! { span { "DOB " (d) } }),
         subject.sex_at_birth.as_ref().map(|s| html! { span { (s) } }),
@@ -134,7 +135,12 @@ fn bio_header(subject: &Subject) -> Markup {
                 (c::button_link_primary(format!("/subjects/{}/clinical", subject.id), "+ Add data"))
                 // Secondary actions come from the `subject_pages` registry — the
                 // same one that wires the routes, so buttons never drift from pages.
-                @for p in crate::subject_pages::pages() {
+                @for p in crate::subject_pages::pages().into_iter().filter(|p| {
+                    match p.feature_key {
+                        Some(k) => enabled_features.iter().any(|e| e == k),
+                        None => true,
+                    }
+                }) {
                     (c::button_link_secondary(format!("/subjects/{}/{}", subject.id, p.slug), p.label))
                 }
             }

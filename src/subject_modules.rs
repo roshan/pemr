@@ -301,6 +301,11 @@ fn growth<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
         if mode == Mode::Print {
             return Ok(None);
         }
+        // Per-subject opt-in feature (PEMR-47): the mini chart card only shows
+        // on subjects with the "growth" feature enabled (default: Astra).
+        if !crate::feature_registry::is_enabled(pool, s.id, "growth").await? {
+            return Ok(None);
+        }
         let series = crate::handlers::subjects::growth_series(pool, s).await?;
         if series.iter().all(|g| g.points.is_empty()) {
             return Ok(None);

@@ -94,7 +94,7 @@ pub async fn render_feature_area(pool: &sqlx::PgPool, s: &Subject) -> AppResult<
     for key in &enabled {
         match key.as_str() {
             "milestones" => surfaces.push(milestone_summary_card(pool, s).await?),
-            // Future features (e.g. growth, PEMR-47) render their surface here.
+            "growth" => surfaces.push(crate::views::growth::feature_card(s)),
             _ => {}
         }
     }

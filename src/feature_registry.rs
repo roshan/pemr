@@ -7,9 +7,9 @@
 //! the surface) but never touches the module's underlying data — disable, never
 //! delete.
 //!
-//! A feature's surface may be an INLINE section on the chart (milestones) or, in
-//! future, a nav button + subpage (growth, once PEMR-47 gates it). `Surface` says
-//! which; gating applies to whichever it is.
+//! A feature's surface may be an INLINE section on the chart (milestones) or a
+//! nav button + subpage (growth, PEMR-47). `Surface` says which; gating applies
+//! to whichever it is.
 //!
 //! Some descriptor fields + helpers here (`description`, `surface`, `is_enabled`)
 //! are part of the registry's forward-looking surface — used by future modules
@@ -24,6 +24,9 @@ use uuid::Uuid;
 pub enum Surface {
     /// Renders as an inline section in the chart's feature area.
     Inline,
+    /// Adds a secondary nav button on the subject chart + a subpage under
+    /// `/subjects/{id}/` (e.g. growth's "Growth charts").
+    Nav,
 }
 
 /// A registry entry: what the feature is + how it surfaces.
@@ -35,15 +38,25 @@ pub struct FeatureDef {
 }
 
 /// The ordered catalogue. Order == display order in the "Add feature" picker.
-/// Growth (PEMR-47) will register here as a second entry when it's gated.
-pub const FEATURES: &[FeatureDef] = &[FeatureDef {
-    key: "milestones",
-    label: "Child milestones tracking (CDC)",
-    description: "Track developmental milestones from the CDC \u{201c}Learn the Signs. Act \
-                  Early.\u{201d} checklists (2 months\u{2013}5 years), with silent \
-                  corrected-age handling for preterm birth.",
-    surface: Surface::Inline,
-}];
+pub const FEATURES: &[FeatureDef] = &[
+    FeatureDef {
+        key: "milestones",
+        label: "Child milestones tracking (CDC)",
+        description: "Track developmental milestones from the CDC \u{201c}Learn the Signs. Act \
+                      Early.\u{201d} checklists (2 months\u{2013}5 years), with silent \
+                      corrected-age handling for preterm birth.",
+        surface: Surface::Inline,
+    },
+    FeatureDef {
+        key: "growth",
+        label: "Growth charts (weight/height/head circumference)",
+        description: "Pediatric growth charts: weight, length/height and \
+                      head-circumference percentile bands vs. WHO/CDC standards \
+                      (PEMR-47). Per-subject — only shows for subjects it is \
+                      enabled on.",
+        surface: Surface::Nav,
+    },
+];
 
 pub fn by_key(key: &str) -> Option<&'static FeatureDef> {
     FEATURES.iter().find(|f| f.key == key)
