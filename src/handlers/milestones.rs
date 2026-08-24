@@ -95,6 +95,7 @@ pub async fn render_feature_area(pool: &sqlx::PgPool, s: &Subject) -> AppResult<
         match key.as_str() {
             "milestones" => surfaces.push(milestone_summary_card(pool, s).await?),
             "growth" => surfaces.push(crate::views::growth::feature_card(s)),
+            "allergies" => surfaces.push(crate::views::subject::allergy_feature_card(s)),
             _ => {}
         }
     }

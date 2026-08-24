@@ -105,6 +105,28 @@ pub fn dashboard_page(
 }
 
 
+/// The feature-area surface for the "allergies" opt-in module: confirms the
+/// feature is enabled and offers removal (disable, never delete — allergy
+/// records are untouched). Allergies have no dedicated page; the surface *is*
+/// the clinical-summary card, so this card is purely a management control.
+pub fn allergy_feature_card(subject: &Subject) -> Markup {
+    let sid = subject.id;
+    let body = html! {
+        p class="text-xs text-muted mt-2" {
+            "The active allergy list shows in this subject\u{2019}s clinical summary."
+        }
+        div class="mt-3 flex flex-wrap gap-2" {
+            (c::hx_action_button(
+                "Remove",
+                &format!("/subjects/{sid}/features/allergies/remove"),
+                "#subject-features",
+                true,
+            ))
+        }
+    };
+    c::foldable_card(html! { "Allergies " (c::badge_neutral("enabled")) }, body, true)
+}
+
 fn bio_header(subject: &Subject, enabled_features: &[String]) -> Markup {
     let bio_parts: Vec<Markup> = [
         subject.dob.map(|d| html! { span { "DOB " (d) } }),

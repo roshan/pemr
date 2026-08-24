@@ -135,6 +135,12 @@ fn problems<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
 
 fn allergies<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
     Box::pin(async move {
+        // Per-subject opt-in feature (PEMR-47 pattern): the allergy card only
+        // shows on subjects with the "allergies" feature enabled. Allergy
+        // records are untouched when disabled.
+        if !crate::feature_registry::is_enabled(pool, s.id, "allergies").await? {
+            return Ok(None);
+        }
         let rows = sqlx::query_as::<_, Allergy>(
             "select * from allergies where subject_id = $1 and status <> 'entered_in_error'
               order by created_at desc",
@@ -175,20 +181,55 @@ fn allergies<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
 
 fn medications<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
     Box::pin(async move {
+        // Active first (recency within each group), then finished. The card is
+        // `CARD_MAX`-truncated either way, so finished courses stay reachable
+        // only when few; full history lives on the DB.
         let rows = sqlx::query_as::<_, Medication>(
-            "select * from medications where subject_id = $1 and status = 'active'
-              order by created_at desc",
+            "select * from medications where subject_id = $1 and status <> 'entered_in_error'
+              order by (status = 'active') desc, coalesce(started_on, created_at::date) desc, created_at desc",
         )
         .bind(s.id)
         .fetch_all(pool)
         .await?;
-        let item = |m: &Medication| c::panel_list_item(
-            html! { (m.name) },
-            html! {
-                @if let Some(dose) = &m.dose { (dose) }
-                @if let Some(freq) = &m.frequency { " · " (freq) }
-            },
-        );
+        // Row body: name + status accent + dates. The dose/frequency line is its
+        // own wrapped row — a long frequency must never push the card edge
+        // (`panel_list_item` details are whitespace-nowrap, which is the bug
+        // this fixes).
+        let item = |m: &Medication| {
+            let active = m.status == "active";
+            let dates = match (m.started_on, m.ended_on) {
+                (Some(s), Some(e)) => format!("{s} \u{2192} {e}"),
+                (Some(s), None) => format!("since {s}"),
+                (None, Some(e)) => format!("ended {e}"),
+                (None, None) => String::new(),
+            };
+            c::panel_list_item(
+                html! {
+                    div class="min-w-0" {
+                        div class="flex items-center gap-2" {
+                            span class={ (if active { "text-ink font-medium" } else { "text-muted line-through" }) } {
+                                (m.name)
+                            }
+                            @if active {
+                                (c::badge_ok("active"))
+                            } @else {
+                                (c::badge_neutral("done"))
+                            }
+                        }
+                        @if m.dose.is_some() || m.frequency.is_some() {
+                            div class="text-xs text-muted mt-0.5 break-words" {
+                                @if let Some(dose) = &m.dose { (dose) }
+                                @if let Some(freq) = &m.frequency {
+                                    @if m.dose.is_some() { " \u{00b7} " }
+                                    (freq)
+                                }
+                            }
+                        }
+                    }
+                },
+                html! { span class="text-xs text-muted whitespace-nowrap" { (dates) } },
+            )
+        };
         Ok(Some(match mode {
             Mode::Card => card("Medications", None, if rows.is_empty() {
                 c::empty_state("No active medications")

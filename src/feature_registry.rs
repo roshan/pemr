@@ -56,6 +56,14 @@ pub const FEATURES: &[FeatureDef] = &[
                       enabled on.",
         surface: Surface::Nav,
     },
+    FeatureDef {
+        key: "allergies",
+        label: "Allergies",
+        description: "The active allergy list (substance, severity/criticality, \
+                      reaction). Per-subject — only shows on subjects it is \
+                      enabled on; allergy records are untouched when disabled.",
+        surface: Surface::Inline,
+    },
 ];
 
 pub fn by_key(key: &str) -> Option<&'static FeatureDef> {
