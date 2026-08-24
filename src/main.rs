@@ -247,6 +247,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/insurance/{id}/edit",
             get(handlers::insurance::edit_form).post(handlers::insurance::edit),
         )
+        .route("/insurance/{id}/cards", post(handlers::insurance::upload_card))
+        .route(
+            "/insurance/{id}/cards/{card_id}/supersede",
+            post(handlers::insurance::supersede_card),
+        )
+        .route(
+            "/insurance/cards/{card_id}/file",
+            get(handlers::insurance::card_file),
+        )
+        .route(
+            "/insurance/cards/{card_id}/thumbnail",
+            get(handlers::insurance::card_thumbnail),
+        )
         .route("/insurance/{id}/subjects", post(handlers::insurance::cover_subject))
         .route(
             "/insurance/{id}/subjects/{sid}/remove",

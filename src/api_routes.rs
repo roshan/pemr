@@ -299,6 +299,24 @@ pub fn routes() -> Vec<ApiRoute> {
             docs: &[("GET", "one insurance plan")],
         },
         ApiRoute {
+            path: "/api/v1/insurance-plans/{id}/cards",
+            doc_path: Some("/api/v1/insurance-plans/{id}/cards?include_superseded="),
+            route: || get(api::insurance_cards::list),
+            docs: &[(
+                "GET",
+                "list this plan's card images (current only unless ?include_superseded=true)",
+            )],
+        },
+        ApiRoute {
+            path: "/api/v1/insurance-plans/{id}/card",
+            doc_path: Some("/api/v1/insurance-plans/{id}/card?side=front|back"),
+            route: || get(api::insurance_cards::current),
+            docs: &[(
+                "GET",
+                "stream the CURRENT card image bytes (always a renderable image; 404 if none on file)",
+            )],
+        },
+        ApiRoute {
             path: "/api/v1/subject-insurance",
             doc_path: None,
             route: || get(api::subject_insurance::list).post(api::subject_insurance::create),

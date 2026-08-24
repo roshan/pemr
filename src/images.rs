@@ -32,3 +32,23 @@ pub fn can_thumbnail(content_type: &str) -> bool {
         "image/png" | "image/jpeg" | "image/jpg" | "image/webp"
     )
 }
+
+/// Sniff the real image format from magic bytes and return its canonical MIME
+/// type. Used where a *stored* file must be known-good image bytes rather than
+/// whatever content-type a client claimed — insurance cards, whose whole point
+/// is that a caller can render them without inspecting them first.
+pub fn sniff_mime(bytes: &[u8]) -> Option<&'static str> {
+    image::guess_format(bytes).ok().map(|f| f.to_mime_type())
+}
+
+/// Canonical file extension for sniffed image bytes, for content-addressed
+/// storage. Falls back to `None` when the bytes aren't a recognised image.
+pub fn sniff_extension(bytes: &[u8]) -> Option<&'static str> {
+    match image::guess_format(bytes).ok()? {
+        image::ImageFormat::Png => Some("png"),
+        image::ImageFormat::Jpeg => Some("jpg"),
+        image::ImageFormat::WebP => Some("webp"),
+        image::ImageFormat::Gif => Some("gif"),
+        _ => None,
+    }
+}

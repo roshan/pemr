@@ -592,6 +592,31 @@ mod clinical_model {
         pub updated_at: OffsetDateTime,
     }
 
+    /// A scanned insurance card image. Bytes live under `FILES_DIR`
+    /// content-addressed (same as records/DICOM); this row is the metadata.
+    /// `superseded_at is null` means "this is the card in your wallet today" --
+    /// the database enforces at most one current row per (plan, side).
+    #[derive(Debug, Clone, FromRow, Serialize)]
+    pub struct InsuranceCard {
+        pub id: Uuid,
+        pub plan_id: Uuid,
+        pub side: String,
+        pub file_path: String,
+        pub content_type: Option<String>,
+        pub byte_size: Option<i64>,
+        pub sha256: Option<String>,
+        pub thumbnail_path: Option<String>,
+        pub thumbnail_content_type: Option<String>,
+        pub effective_date: Option<Date>,
+        #[serde(with = "time::serde::rfc3339::option")]
+        pub superseded_at: Option<OffsetDateTime>,
+        pub notes: String,
+        #[serde(with = "time::serde::rfc3339")]
+        pub created_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339")]
+        pub updated_at: OffsetDateTime,
+    }
+
     /// Coverage link (subject ↔ insurance plan). Mirrors `SubjectProvider`:
     /// composite PK (subject_id, plan_id), relationship + per-person id as attrs.
     #[derive(Debug, Clone, FromRow, Serialize)]
@@ -663,4 +688,7 @@ mod clinical_model {
     /// Beneficiary's relationship to the policyholder (FHIR Coverage.relationship).
     pub const INSURANCE_RELATIONSHIPS: &[&str] =
         &["self", "spouse", "child", "dependent", "other"];
+    /// Which face of the card an image shows. Deliberately just two: a card has
+    /// a front and a back, and `insurance_cards_current_side_uk` keys on this.
+    pub const INSURANCE_CARD_SIDES: &[&str] = &["front", "back"];
 }

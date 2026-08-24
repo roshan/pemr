@@ -24,6 +24,7 @@ pub mod conditions;
 pub mod immunizations;
 pub mod import;
 pub mod incidents;
+pub mod insurance_cards;
 pub mod insurance_plans;
 pub mod me;
 pub mod medications;

@@ -2,17 +2,19 @@
 //! one card): plans live at `/insurance`; covered people are linked per-plan.
 //! Plain form POST → redirect, matching the providers/sources handlers.
 
-use axum::extract::{Form, Path, State};
+use axum::extract::{Form, Multipart, Path, State};
 use axum::response::{IntoResponse, Redirect, Response};
 use maud::Markup;
 use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
+use crate::files::{self, StoredFile};
+use crate::images;
 use crate::handlers::{AppState, load_subjects};
 use crate::models::{
-    INSURANCE_PLAN_KINDS, INSURANCE_PLAN_TYPES, INSURANCE_RELATIONSHIPS, InsurancePlan, Source,
-    SubjectInsurance, empty_to_none, parse_date,
+    INSURANCE_CARD_SIDES, INSURANCE_PLAN_KINDS, INSURANCE_PLAN_TYPES, INSURANCE_RELATIONSHIPS,
+    InsuranceCard, InsurancePlan, Source, SubjectInsurance, empty_to_none, parse_date,
 };
 use crate::viewer::ViewerContext;
 use crate::views::insurance;
@@ -167,7 +169,8 @@ pub async fn detail(
         current_subject: None,
         viewer: &viewer,
     };
-    Ok(insurance::detail_page(&nav, &plan, &covered, &subjects))
+    let cards = load_cards(&state.pool, id).await?;
+    Ok(insurance::detail_page(&nav, &plan, &covered, &subjects, &cards))
 }
 
 pub async fn edit_form(
@@ -276,4 +279,174 @@ pub async fn uncover_subject(
         .execute(&state.pool)
         .await?;
     Ok(Redirect::to(&format!("/insurance/{id}")).into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Card images
+//
+// A card is bytes, so it follows the records/DICOM path exactly: content-
+// addressed under FILES_DIR + a webp thumbnail. The one extra rule is that a
+// stored card is ALWAYS decodable image bytes -- we sniff the magic bytes and
+// reject anything else rather than trusting the client's content-type. That is
+// what lets `GET /api/v1/insurance-plans/{id}/card` promise an image to an
+// agent that just wants to display it (PEMR-51).
+// ---------------------------------------------------------------------------
+
+/// Cards are photos or scans, not imaging studies -- a couple of MB at most.
+/// Deliberately far below the records ceiling so a misdirected upload fails
+/// fast instead of filling the volume.
+const MAX_CARD_BYTES: usize = 32 * 1024 * 1024;
+
+pub async fn upload_card(
+    State(state): State<AppState>,
+    Path(plan_id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> AppResult<Response> {
+    let mut side = "front".to_string();
+    let mut effective_date = String::new();
+    let mut notes = String::new();
+    let mut file_bytes: Option<bytes::Bytes> = None;
+
+    while let Some(field) = multipart.next_field().await? {
+        match field.name().unwrap_or("") {
+            "side" => side = field.text().await?,
+            "effective_date" => effective_date = field.text().await?,
+            "notes" => notes = field.text().await?,
+            "file" => {
+                let bytes = field.bytes().await?;
+                if bytes.len() > MAX_CARD_BYTES {
+                    return Err(AppError::BadRequest(format!(
+                        "card image too large: {} bytes (max {MAX_CARD_BYTES})",
+                        bytes.len()
+                    )));
+                }
+                if !bytes.is_empty() {
+                    file_bytes = Some(bytes);
+                }
+            }
+            _ => {
+                let _ = field.bytes().await?;
+            }
+        }
+    }
+
+    let side = side.trim().to_lowercase();
+    if !INSURANCE_CARD_SIDES.contains(&side.as_str()) {
+        return Err(AppError::BadRequest(format!("unknown card side: {side}")));
+    }
+    let effective_date = parse_date(&effective_date).map_err(AppError::BadRequest)?;
+    let bytes = file_bytes.ok_or_else(|| AppError::BadRequest("no image uploaded".into()))?;
+
+    // Reject non-images up front: the retrieval contract is "you get an image".
+    // A PDF card has to be rasterised before upload, and we say so.
+    let mime = images::sniff_mime(&bytes).ok_or_else(|| {
+        AppError::BadRequest(
+            "card must be an image (PNG, JPEG, WebP or GIF). PDFs and TIFFs need converting first."
+                .into(),
+        )
+    })?;
+    let ext = images::sniff_extension(&bytes).unwrap_or("bin");
+
+    let stored: StoredFile = files::store_bytes(&state.files_dir, &bytes, Some(ext)).await?;
+    let thumb: Option<StoredFile> = match images::thumbnail_webp(&bytes, 400) {
+        Ok(webp) => Some(files::store_bytes(&state.files_dir, &webp, Some("webp")).await?),
+        Err(e) => {
+            tracing::warn!(error = %e, "card thumbnail failed; storing without one");
+            None
+        }
+    };
+
+    // Replacing a side retires the old card rather than deleting it: a lapsed
+    // card is still the right evidence for a claim from that plan year. The
+    // partial unique index requires this to happen in the same transaction.
+    let mut tx = state.pool.begin().await?;
+    sqlx::query(
+        "update insurance_cards set superseded_at = now(), updated_at = now()
+          where plan_id = $1 and side = $2 and superseded_at is null",
+    )
+    .bind(plan_id)
+    .bind(&side)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "insert into insurance_cards
+            (id, plan_id, side, file_path, content_type, byte_size, sha256,
+             thumbnail_path, thumbnail_content_type, effective_date, notes)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(plan_id)
+    .bind(&side)
+    .bind(&stored.relative_path)
+    .bind(mime)
+    .bind(stored.byte_size)
+    .bind(&stored.sha256_hex)
+    .bind(thumb.as_ref().map(|t| t.relative_path.clone()))
+    .bind(thumb.as_ref().map(|_| "image/webp"))
+    .bind(effective_date)
+    .bind(notes)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    Ok(Redirect::to(&format!("/insurance/{plan_id}")).into_response())
+}
+
+/// Retire a card without uploading a replacement (plan cancelled, card lost).
+pub async fn supersede_card(
+    State(state): State<AppState>,
+    Path((plan_id, card_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Response> {
+    sqlx::query(
+        "update insurance_cards set superseded_at = now(), updated_at = now()
+          where id = $1 and plan_id = $2 and superseded_at is null",
+    )
+    .bind(card_id)
+    .bind(plan_id)
+    .execute(&state.pool)
+    .await?;
+    Ok(Redirect::to(&format!("/insurance/{plan_id}")).into_response())
+}
+
+pub async fn card_file(
+    State(state): State<AppState>,
+    Path(card_id): Path<Uuid>,
+) -> AppResult<Response> {
+    let row: Option<(String, Option<String>, Option<i64>, String)> = sqlx::query_as(
+        "select c.file_path, c.content_type, c.byte_size, p.payer_name
+           from insurance_cards c join insurance_plans p on p.id = c.plan_id
+          where c.id = $1",
+    )
+    .bind(card_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let (path, ct, size, payer) = row.ok_or(AppError::NotFound)?;
+    crate::handlers::records::serve_file(&state, Some(path), ct, size, &payer).await
+}
+
+pub async fn card_thumbnail(
+    State(state): State<AppState>,
+    Path(card_id): Path<Uuid>,
+) -> AppResult<Response> {
+    let row: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
+        "select c.thumbnail_path, c.thumbnail_content_type, p.payer_name
+           from insurance_cards c join insurance_plans p on p.id = c.plan_id
+          where c.id = $1",
+    )
+    .bind(card_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let (path, ct, payer) = row.ok_or(AppError::NotFound)?;
+    crate::handlers::records::serve_file(&state, path, ct, None, &payer).await
+}
+
+/// Current cards for a plan, front first — what the detail page renders.
+pub async fn load_cards(pool: &sqlx::PgPool, plan_id: Uuid) -> Result<Vec<InsuranceCard>, sqlx::Error> {
+    sqlx::query_as::<_, InsuranceCard>(
+        "select * from insurance_cards where plan_id = $1 and superseded_at is null
+          order by case side when 'front' then 0 else 1 end",
+    )
+    .bind(plan_id)
+    .fetch_all(pool)
+    .await
 }

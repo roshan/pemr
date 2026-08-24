@@ -774,7 +774,7 @@ pub async fn thumbnail_route(
     serve_file(&state, path, ct, None, &title).await
 }
 
-async fn serve_file(
+pub(crate) async fn serve_file(
     state: &AppState,
     file_path: Option<String>,
     content_type: Option<String>,

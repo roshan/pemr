@@ -6,8 +6,8 @@ use maud::{Markup, html};
 use uuid::Uuid;
 
 use crate::models::{
-    INSURANCE_PLAN_KINDS, INSURANCE_PLAN_TYPES, INSURANCE_RELATIONSHIPS, InsurancePlan, Source,
-    Subject, SubjectInsurance,
+    INSURANCE_CARD_SIDES, INSURANCE_PLAN_KINDS, INSURANCE_PLAN_TYPES, INSURANCE_RELATIONSHIPS,
+    InsuranceCard, InsurancePlan, Source, Subject, SubjectInsurance,
 };
 use crate::views::components as c;
 use crate::views::layout::{Nav, render_date, shell};
@@ -155,6 +155,7 @@ pub fn detail_page(
     plan: &InsurancePlan,
     covered: &[SubjectInsurance],
     subjects: &[Subject],
+    cards: &[InsuranceCard],
 ) -> Markup {
     let pid = plan.id;
     let body = html! {
@@ -185,6 +186,44 @@ pub fn detail_page(
                 }
             }
             @if !plan.notes.is_empty() { div class="mt-2" { (c::prose(&plan.notes)) } }
+        }))
+
+        (c::lane(html! { (c::section_heading("Card")) }, html! {
+            @if cards.is_empty() {
+                (c::empty_state("No card image on file. Upload one below — it's what you actually need at a clinic desk."))
+            } @else {
+                div class="flex flex-wrap gap-4" {
+                    @for card in cards {
+                        figure class="max-w-md" {
+                            a href={ "/insurance/cards/" (card.id) "/file" } target="_blank" {
+                                img src={ "/insurance/cards/" (card.id) "/file" }
+                                    alt={ (plan.payer_name) " card, " (card.side) }
+                                    class="w-full rounded-lg border border-line shadow-sm";
+                            }
+                            figcaption class="mt-1 flex items-baseline justify-between gap-3 text-sm" {
+                                span { (c::badge_neutral(&card.side)) }
+                                (c::post_button(
+                                    format!("/insurance/{pid}/cards/{}/supersede", card.id),
+                                    "retire"))
+                            }
+                        }
+                    }
+                }
+            }
+            (c::collapse_section("Upload a card image",
+                c::form_multipart(format!("/insurance/{pid}/cards"), html! {
+                    (c::field("Side", c::select_field("side", true, || html! {
+                        @for side in INSURANCE_CARD_SIDES {
+                            (c::select_option(side, *side, *side == "front"))
+                        }
+                    })))
+                    (c::field_with_hint("Image",
+                        "PNG, JPEG or WebP. Uploading a side replaces the current one; the old card is retired, not deleted.",
+                        c::input_file("file")))
+                    (c::field("Effective date", c::input_date("effective_date", "")))
+                    (c::field("Notes", c::textarea_field("notes", "", 2)))
+                    (c::button_primary("Upload card"))
+                }), false))
         }))
 
         (c::lane(html! { (c::section_heading("Covered people")) }, html! {
