@@ -140,6 +140,19 @@ pub fn panel_list_item(primary: Markup, detail: Markup) -> Markup {
     }
 }
 
+/// Like [`panel_list_item`], but the primary truncates with an ellipsis instead
+/// of growing — for rows whose primary can be a long phrase (e.g. "1 syringe
+/// subcutaneous") that would otherwise shove the nowrap detail out of the card.
+/// `min-w-0` lets the flex child shrink; `shrink-0` keeps the detail readable.
+pub fn panel_list_item_truncated(primary: Markup, detail: Markup) -> Markup {
+    html! {
+        li class="flex items-baseline justify-between gap-3" {
+            span class="min-w-0 truncate" { (primary) }
+            span class="text-xs text-muted whitespace-nowrap shrink-0" { (detail) }
+        }
+    }
+}
+
 /// Small muted inline text.
 pub fn muted(text: impl Render) -> Markup {
     html! { span class="text-xs text-muted" { (text) } }

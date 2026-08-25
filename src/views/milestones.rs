@@ -263,11 +263,7 @@ pub fn feature_panel(subject_id: Uuid, enabled: &[String]) -> Markup {
             html! {
                 div class="flex items-start justify-between gap-3 border-b border-line py-3 last:border-b-0" {
                     div class="min-w-0" {
-                        div class="flex items-center gap-2 flex-wrap" {
-                            span class="text-sm font-semibold text-ink" { (f.label) }
-                            @if on { (c::badge_neutral("enabled")) }
-                            @else { span class="text-xs text-muted" { "off" } }
-                        }
+                        span class="text-sm font-semibold text-ink" { (f.label) }
                         p class="text-xs text-muted mt-0.5" { (f.description) }
                     }
                     div class="shrink-0" { (ctl) }
