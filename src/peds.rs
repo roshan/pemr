@@ -30,7 +30,7 @@ const SCHEDULE: &[VaccineSchedule] = &[
     VaccineSchedule { family: "Polio (IPV)", cvx: &["10", "110", "120", "146"], keywords: &["ipv", "polio"], doses_months: &[2.0, 4.0, 6.0, 48.0] },
     VaccineSchedule { family: "MMR", cvx: &["03", "94"], keywords: &["mmr", "measles"], doses_months: &[12.0, 48.0] },
     VaccineSchedule { family: "Varicella", cvx: &["21", "94"], keywords: &["varicella", "chickenpox"], doses_months: &[12.0, 48.0] },
-    VaccineSchedule { family: "Hepatitis A", cvx: &["83", "85", "84"], keywords: &["hep a", "hepa", "hepatitis a"], doses_months: &[12.0, 18.0] },
+    VaccineSchedule { family: "Hepatitis A", cvx: &["83", "85", "84"], keywords: &["hep a", "hepatitis a"], doses_months: &[12.0, 18.0] },
 ];
 
 #[derive(Debug)]
@@ -59,15 +59,33 @@ pub fn forecast_applies(dob: Date, today: Date) -> bool {
     age_years < MAX_FORECAST_AGE_YEARS
 }
 
-fn matches(s: &VaccineSchedule, imm: &Immunization) -> bool {
-    if let Some(code) = imm.code.as_deref() {
+/// All vaccine families an immunization row maps to, independent of the source's
+/// code (CAIR keys by nothing, EHI by NDC, FHIR by CVX — so a raw `(code, date)`
+/// key can't match the same shot across sources; PEMR-48). Matches by CVX code,
+/// then by display-name keyword, mirroring [`VaccineSchedule`]. A combination
+/// vaccine (DTaP-IPV/Hib) returns every family it counts toward, so the dedup
+/// key is the family *set* — a source that lists a combo as one row (EHI) dedups
+/// against a source that lists it per-disease-group (CAIR).
+pub fn vaccine_families(code: Option<&str>, name: &str) -> Vec<&'static str> {
+    SCHEDULE
+        .iter()
+        .filter(|s| matches_code_or_name(s, code, name))
+        .map(|s| s.family)
+        .collect()
+}
+
+fn matches_code_or_name(s: &VaccineSchedule, code: Option<&str>, name: &str) -> bool {
+    if let Some(code) = code {
         let code = code.trim();
         if s.cvx.iter().any(|c| c.eq_ignore_ascii_case(code)) {
             return true;
         }
     }
-    let name = imm.vaccine.to_ascii_lowercase();
-    s.keywords.iter().any(|k| name.contains(k))
+    s.keywords.iter().any(|k| name.to_ascii_lowercase().contains(k))
+}
+
+fn matches(s: &VaccineSchedule, imm: &Immunization) -> bool {
+    matches_code_or_name(s, imm.code.as_deref(), &imm.vaccine)
 }
 
 fn add_months(dob: Date, months: f64) -> Date {
@@ -205,5 +223,36 @@ mod tests {
         let dob = date!(2007 - 07 - 01);
         assert!(forecast_applies(dob, date!(2026 - 06 - 30))); // just under 19
         assert!(!forecast_applies(dob, date!(2026 - 07 - 02))); // just over 19
+    }
+
+    #[test]
+    fn families_match_by_cvx_and_keyword() {
+        // Same clinical concept, different source vocabularies (PEMR-48): CVX
+        // code from FHIR, NDC code from EHI, name-only from CAIR.
+        let cvx = vaccine_families(Some("08"), "HEPATITIS B");
+        assert_eq!(cvx, vec!["Hepatitis B"]);
+        let ndc = vaccine_families(Some("0006-4093-02"), "HEPATITIS B, PED/ADOL");
+        assert_eq!(ndc, vec!["Hepatitis B"]);
+        let named = vaccine_families(None, "Hepatitis B");
+        assert_eq!(named, vec!["Hepatitis B"]);
+    }
+
+    #[test]
+    fn families_of_combination_vaccine_covers_each_disease_group() {
+        // "DTAP/HIB/IPV" (EHI) counts toward DTaP, Hib, AND Polio — so a source
+        // that lists the combo per-disease-group dedups onto the single row.
+        let fams = vaccine_families(Some("49281-510-05"), "DTAP/HIB/IPV");
+        assert_eq!(fams.len(), 3);
+        assert!(fams.contains(&"DTaP"));
+        assert!(fams.contains(&"Hib"));
+        assert!(fams.contains(&"Polio (IPV)"));
+    }
+
+    #[test]
+    fn unknown_vaccine_has_no_family() {
+        // Influenza/COVID aren't in the routine childhood schedule — no family,
+        // so the dedup falls back to the exact-name match instead.
+        assert!(vaccine_families(None, "INFLUENZA, SPLIT TRI PF").is_empty());
+        assert!(vaccine_families(None, "Some novel mRNA vaccine").is_empty());
     }
 }

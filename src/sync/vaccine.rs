@@ -381,6 +381,31 @@ async fn upsert_immunization(
     imm: &ParsedImmunization,
     ext_id: &str,
 ) -> Result<(), String> {
+    // Cross-source dedup (PEMR-48): CAIR carries no CVX code, so a CAIR shot
+    // must merge onto an EHI/FHIR row already storing the same vaccine (family
+    // concept + date) rather than insert a second row. Keep the richest: a real
+    // dose number or lot fills a gap but never wipes existing data.
+    if let Some(existing_id) =
+        crate::dedupe::find_immunization_match(pool, subject_id, &imm.vaccine, None, imm.occurred_at)
+            .await
+            .map_err(|e| format!("DB dedup lookup error: {e}"))?
+    {
+        crate::dedupe::merge_immunization(
+            pool,
+            existing_id,
+            &imm.vaccine,
+            None,
+            None,
+            imm.occurred_at,
+            imm.dose_number,
+            None,
+            None,
+            None,
+        )
+        .await
+        .map_err(|e| format!("DB dedup merge error: {e}"))?;
+        return Ok(());
+    }
     sqlx::query(
         "insert into immunizations
              (id, subject_id, vaccine, occurred_at, dose_number,
@@ -404,7 +429,7 @@ async fn upsert_immunization(
     .bind(&imm.status)
     .bind(source_id)
     .bind(ext_id)
-    .execute(pool)
+        .execute(pool)
     .await
     .map_err(|e| format!("DB upsert error: {e}"))?;
     Ok(())

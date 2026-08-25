@@ -241,16 +241,37 @@ pub async fn import_fhir(
                     _ => "completed",
                 };
                 let occurred = str_at(r, "occurrenceDateTime").and_then(fhir_date);
-                sqlx::query(&format!(
-                    "insert into immunizations (id, subject_id, vaccine, code, code_system, occurred_at, status, source_id, external_id)
-                     values ($1,$2,$3,$4,$5,$6,$7,$8,$9){ON_CONFLICT}
-                        vaccine=excluded.vaccine, code=excluded.code, code_system=excluded.code_system,
-                        occurred_at=excluded.occurred_at, status=excluded.status, updated_at=now()"
-                ))
-                .bind(Uuid::now_v7()).bind(subject_id).bind(&vaccine).bind(&code)
-                .bind(code_system_label(system.as_deref(), &code)).bind(occurred).bind(status)
-                .bind(source_id).bind(&ext_id)
-                .execute(pool).await?;
+                // Cross-source dedup (PEMR-48): if a row for this subject already
+                // carries the same shot (same date + vaccine family/CVX concept),
+                // merge the richer fields into it rather than insert a duplicate.
+                if let Some(existing_id) = crate::dedupe::find_immunization_match(
+                    pool,
+                    subject_id,
+                    &vaccine,
+                    code.as_deref(),
+                    occurred,
+                ).await? {
+                    crate::dedupe::merge_immunization(
+                        pool,
+                        existing_id,
+                        &vaccine,
+                        code.as_deref(),
+                        code_system_label(system.as_deref(), &code).as_deref(),
+                        occurred,
+                        None, None, None, None,
+                    ).await?;
+                } else {
+                    sqlx::query(&format!(
+                        "insert into immunizations (id, subject_id, vaccine, code, code_system, occurred_at, status, source_id, external_id)
+                         values ($1,$2,$3,$4,$5,$6,$7,$8,$9){ON_CONFLICT}
+                            vaccine=excluded.vaccine, code=excluded.code, code_system=excluded.code_system,
+                            occurred_at=excluded.occurred_at, status=excluded.status, updated_at=now()"
+                    ))
+                    .bind(Uuid::now_v7()).bind(subject_id).bind(&vaccine).bind(&code)
+                    .bind(code_system_label(system.as_deref(), &code)).bind(occurred).bind(status)
+                    .bind(source_id).bind(&ext_id)
+                    .execute(pool).await?;
+                }
                 c.immunizations += 1;
             }
             "Observation" => {
@@ -311,6 +332,33 @@ async fn import_fhir_observation(
         ),
         None => (None, str_at(r, "valueString").map(str::to_string), None),
     };
+    // Cross-source dedup (PEMR-48): the same measurement (LOINC code or lower
+    // display) on the same effective date → merge richer fields in place rather
+    // than insert a duplicate row.
+    if let Some(existing_id) = crate::dedupe::find_observation_match(
+        pool, subject_id, code.as_deref(), &display, effective_on,
+    )
+    .await?
+    {
+        crate::dedupe::merge_observation(
+            pool,
+            existing_id,
+            category,
+            code.as_deref(),
+            code_system_label(system.as_deref(), &code).as_deref(),
+            &display,
+            value_num,
+            value_text.as_deref(),
+            unit.as_deref(),
+            None,
+            None,
+            None,
+            None,
+            effective_on,
+        )
+        .await?;
+        return Ok(true);
+    }
     sqlx::query(&format!(
         "insert into observations (id, subject_id, category, code, code_system, display, value_num, value_text, unit, effective_on, source_id, external_id)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12){ON_CONFLICT}
@@ -1056,35 +1104,88 @@ async fn upsert_item(
             }
         }
         CItem::Immunization { vaccine, code, code_system, occurred, dose_number, lot_number, site, route } => {
-            sqlx::query(&format!(
-                "insert into immunizations (id, subject_id, vaccine, code, code_system, occurred_at, dose_number, lot_number, site, route, source_id, external_id)
-                 values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12){ON_CONFLICT}
-                    vaccine=excluded.vaccine, code=excluded.code, code_system=excluded.code_system,
-                    occurred_at=excluded.occurred_at,
-                    dose_number=coalesce(excluded.dose_number, immunizations.dose_number),
-                    lot_number=coalesce(excluded.lot_number, immunizations.lot_number),
-                    site=coalesce(excluded.site, immunizations.site),
-                    route=coalesce(excluded.route, immunizations.route), updated_at=now()"
-            ))
-            .bind(Uuid::now_v7()).bind(subject_id).bind(&vaccine).bind(&code).bind(&code_system)
-            .bind(occurred).bind(dose_number).bind(&lot_number).bind(&site).bind(&route)
-            .bind(source_id).bind(ext_id).execute(&mut *conn).await?;
+            // Cross-source dedup (PEMR-48): same subject + date + vaccine family →
+            // merge richer fields (lot/site/route/dose) into the existing row.
+            if let Some(existing_id) = crate::dedupe::find_immunization_match(
+                &mut *conn,
+                subject_id,
+                &vaccine,
+                code.as_deref(),
+                occurred,
+            )
+            .await?
+            {
+                crate::dedupe::merge_immunization(
+                    &mut *conn,
+                    existing_id,
+                    &vaccine,
+                    code.as_deref(),
+                    code_system.as_deref(),
+                    occurred,
+                    dose_number,
+                    lot_number.as_deref(),
+                    site.as_deref(),
+                    route.as_deref(),
+                )
+                .await?;
+            } else {
+                sqlx::query(&format!(
+                    "insert into immunizations (id, subject_id, vaccine, code, code_system, occurred_at, dose_number, lot_number, site, route, source_id, external_id)
+                     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12){ON_CONFLICT}
+                        vaccine=excluded.vaccine, code=excluded.code, code_system=excluded.code_system,
+                        occurred_at=excluded.occurred_at,
+                        dose_number=coalesce(excluded.dose_number, immunizations.dose_number),
+                        lot_number=coalesce(excluded.lot_number, immunizations.lot_number),
+                        site=coalesce(excluded.site, immunizations.site),
+                        route=coalesce(excluded.route, immunizations.route), updated_at=now()"
+                ))
+                .bind(Uuid::now_v7()).bind(subject_id).bind(&vaccine).bind(&code).bind(&code_system)
+                .bind(occurred).bind(dose_number).bind(&lot_number).bind(&site).bind(&route)
+                .bind(source_id).bind(ext_id).execute(&mut *conn).await?;
+            }
         }
         CItem::Observation {
             display, code, code_system, value_num, value_text, unit,
             ref_low, ref_high, abnormal_flag, panel_id, effective, category,
         } => {
-            sqlx::query(&format!(
-                "insert into observations (id, subject_id, category, code, code_system, display, value_num, value_text, unit, ref_low, ref_high, abnormal_flag, panel_id, effective_on, source_id, external_id)
-                 values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16){ON_CONFLICT}
-                    category=excluded.category, code=excluded.code, code_system=excluded.code_system, display=excluded.display,
-                    value_num=excluded.value_num, value_text=excluded.value_text, unit=excluded.unit,
-                    ref_low=excluded.ref_low, ref_high=excluded.ref_high, abnormal_flag=excluded.abnormal_flag,
-                    panel_id=excluded.panel_id, effective_on=excluded.effective_on, updated_at=now()"
-            ))
-            .bind(Uuid::now_v7()).bind(subject_id).bind(category).bind(&code).bind(&code_system).bind(&display)
-            .bind(value_num).bind(&value_text).bind(&unit).bind(ref_low).bind(ref_high).bind(&abnormal_flag)
-            .bind(panel_id).bind(effective).bind(source_id).bind(ext_id).execute(&mut *conn).await?;
+            // Cross-source dedup (PEMR-48): same measurement (LOINC code or
+            // lower display) on the same effective date → merge richer fields
+            // (numeric value, unit, reference range, abnormal flag) in place.
+            if let Some(existing_id) = crate::dedupe::find_observation_match(
+                &mut *conn, subject_id, code.as_deref(), &display, effective,
+            )
+            .await?
+            {
+                crate::dedupe::merge_observation(
+                    &mut *conn,
+                    existing_id,
+                    category,
+                    code.as_deref(),
+                    code_system.as_deref(),
+                    &display,
+                    value_num,
+                    value_text.as_deref(),
+                    unit.as_deref(),
+                    ref_low,
+                    ref_high,
+                    abnormal_flag.as_deref(),
+                    panel_id.as_ref(),
+                    effective,
+                )
+                .await?;
+            } else {
+                sqlx::query(&format!(
+                    "insert into observations (id, subject_id, category, code, code_system, display, value_num, value_text, unit, ref_low, ref_high, abnormal_flag, panel_id, effective_on, source_id, external_id)
+                     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16){ON_CONFLICT}
+                        category=excluded.category, code=excluded.code, code_system=excluded.code_system, display=excluded.display,
+                        value_num=excluded.value_num, value_text=excluded.value_text, unit=excluded.unit,
+                        ref_low=excluded.ref_low, ref_high=excluded.ref_high, abnormal_flag=excluded.abnormal_flag,
+                        panel_id=excluded.panel_id, effective_on=excluded.effective_on, updated_at=now()"
+                ))
+                .bind(Uuid::now_v7()).bind(subject_id).bind(category).bind(&code).bind(&code_system).bind(&display)
+                .bind(value_num).bind(&value_text).bind(&unit).bind(ref_low).bind(ref_high).bind(&abnormal_flag)
+                .bind(panel_id).bind(effective).bind(source_id).bind(ext_id).execute(&mut *conn).await?;
+            }
         }
     }
     Ok(())

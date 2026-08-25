@@ -2,6 +2,7 @@ mod api_auth;
 mod api_routes;
 mod config;
 mod db;
+mod dedupe;
 mod dicom_import;
 mod error;
 mod feature_registry;
