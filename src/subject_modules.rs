@@ -448,7 +448,7 @@ fn insurance<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
             return Ok(None);
         }
         let rows = sqlx::query_as::<_, InsuranceCoverageRow>(
-            "select p.payer_name, p.plan_name, p.plan_kind,
+            "select p.id as plan_id, p.payer_name, p.plan_name, p.plan_kind,
                     si.relationship, coalesce(si.member_id, p.member_id) as member_id
                from subject_insurance si join insurance_plans p on p.id = si.plan_id
               where si.subject_id = $1
@@ -461,7 +461,14 @@ fn insurance<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
             c::empty_state("No insurance recorded")
         } else {
             truncated_list(rows.iter().map(|ins| c::panel_list_item(
-                html! { (ins.payer_name) @if let Some(pn) = &ins.plan_name { " " (c::muted(pn)) } },
+                // Each payer links to its plan page — the current card image is
+                // one tap away from the chart (PEMR-55 Part C).
+                html! {
+                    a href={ "/insurance/" (ins.plan_id) } class="font-medium hover:underline" {
+                        (ins.payer_name)
+                    }
+                    @if let Some(pn) = &ins.plan_name { " " (c::muted(pn)) }
+                },
                 html! {
                     @if let Some(m) = &ins.member_id { (m) " · " }
                     (ins.plan_kind) " · " (ins.relationship)

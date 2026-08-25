@@ -194,6 +194,7 @@ pub struct CareTeamMember {
 /// insurance_plans). `member_id` coalesces the per-person id over the card's.
 #[derive(Debug, FromRow)]
 pub struct InsuranceCoverageRow {
+    pub plan_id: Uuid,
     pub payer_name: String,
     pub plan_name: Option<String>,
     pub plan_kind: String,

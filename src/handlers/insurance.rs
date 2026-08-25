@@ -450,3 +450,50 @@ pub async fn load_cards(pool: &sqlx::PgPool, plan_id: Uuid) -> Result<Vec<Insura
     .fetch_all(pool)
     .await
 }
+
+/// One tile on the home dashboard's "Insurance cards" lane (PEMR-55 Part C):
+/// a plan plus its current front card, if any. The card image is the artifact
+/// you reach from the dashboard in one tap.
+#[derive(Debug, Clone)]
+pub struct InsuranceCardTile {
+    pub plan: InsurancePlan,
+    pub current_front: Option<InsuranceCard>,
+}
+
+/// All plans with coverage, each with its current front card (if on file) —
+/// ordered by payer, primary-coverage plans first. `None` front = clean
+/// "no card on file" absence, matching the API's 404-as-absence contract.
+pub async fn load_dashboard_tiles(
+    pool: &sqlx::PgPool,
+    subject: Option<Uuid>,
+) -> Result<Vec<InsuranceCardTile>, sqlx::Error> {
+    let plans: Vec<InsurancePlan> = match subject {
+        Some(sid) => sqlx::query_as::<_, InsurancePlan>(
+            "select p.* from insurance_plans p
+               join subject_insurance si on si.plan_id = p.id
+              where si.subject_id = $1
+              order by si.is_primary desc, p.payer_name",
+        )
+        .bind(sid)
+        .fetch_all(pool)
+        .await?,
+        None => sqlx::query_as::<_, InsurancePlan>(
+            "select * from insurance_plans order by payer_name",
+        )
+        .fetch_all(pool)
+        .await?,
+    };
+    let mut tiles = Vec::with_capacity(plans.len());
+    for p in plans {
+        let front = sqlx::query_as::<_, InsuranceCard>(
+            "select * from insurance_cards
+              where plan_id = $1 and side = 'front' and superseded_at is null
+              order by created_at desc limit 1",
+        )
+        .bind(p.id)
+        .fetch_optional(pool)
+        .await?;
+        tiles.push(InsuranceCardTile { plan: p, current_front: front });
+    }
+    Ok(tiles)
+}

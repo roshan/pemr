@@ -60,6 +60,8 @@ pub struct DashboardData<'a> {
     /// the all-subjects view and on the per-subject chart (which renders the
     /// full clinical summary itself).
     pub clinical: Option<ClinicalSnapshot>,
+    /// Current insurance card tiles for the one-tap dashboard lane.
+    pub insurance_tiles: &'a [crate::handlers::insurance::InsuranceCardTile],
 }
 
 /// The home-dashboard clinical snapshot: the subject in scope plus the counts
@@ -112,6 +114,10 @@ pub fn body(nav: &Nav<'_>, data: &DashboardData<'_>, show_timeline: bool) -> Mar
 
         @if let Some(snap) = &data.clinical {
             (clinical_snapshot(snap))
+        }
+
+        @if show_timeline && !data.insurance_tiles.is_empty() {
+            (insurance_cards_lane(data.insurance_tiles))
         }
 
         @if show_timeline {
@@ -222,6 +228,52 @@ fn record_card(rec: &Record, subjects: &[Subject]) -> Markup {
                     (c::badge_neutral(render_date(rec.occurred_at, &rec.occurred_precision)))
                 }))
             }
+        }
+    }
+}
+
+/// The one-tap "Insurance cards" lane (PEMR-55): the current card image for
+/// each plan, linked to the full plan/card detail. A plan with no card on file
+/// renders a clean absence tile linking to the plan (where uploads happen),
+/// matching the API's 404-as-absence contract. Home dashboard only.
+fn insurance_cards_lane(
+    tiles: &[crate::handlers::insurance::InsuranceCardTile],
+) -> Markup {
+    let cards = html! {
+        @for t in tiles {
+            @let plan_url = format!("/insurance/{}", t.plan.id);
+            @match (&t.current_front) {
+                Some(card) => {
+                    @let img_url = format!("/insurance/cards/{}/file", card.id);
+                    a href=(plan_url) class="block rounded-lg border border-line bg-surface shadow-xs overflow-hidden hover:border-brand hover:no-underline" {
+                        img src=(img_url)
+                            alt={ (t.plan.payer_name) " insurance card, front" }
+                            loading="lazy"
+                            class="block w-full h-44 object-cover bg-slate-900";
+                        div class="p-3" {
+                            div class="text-sm font-semibold text-ink" { (t.plan.payer_name) }
+                            @if let Some(pn) = &t.plan.plan_name {
+                                p class="text-xs text-muted" { (pn) }
+                            }
+                        }
+                    }
+                }
+                None => {
+                    a href=(plan_url) class="block rounded-lg border border-dashed border-line bg-surface p-3 hover:border-brand hover:no-underline text-center" {
+                        div class="text-sm font-medium text-ink" { (t.plan.payer_name) }
+                        p class="text-xs text-muted mt-1" { "No card on file" }
+                    }
+                }
+            }
+        }
+    };
+    html! {
+        section class="mb-6" {
+            div class="flex items-baseline justify-between mb-2" {
+                (c::section_heading("Insurance cards"))
+                (c::link_subtle("/insurance", "Manage →"))
+            }
+            div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" { (cards) }
         }
     }
 }

@@ -189,8 +189,10 @@ pub async fn detail(
         timeline_total,
         recent_incidents: &recent_incidents,
         recent_records: &recent_records,
-        // The chart renders the full clinical summary below; no snapshot needed.
         clinical: None,
+        // The dashboard's one-tap insurance lane is home-only; the chart covers
+        // cards via its clinical-summary Insurance module.
+        insurance_tiles: &[],
     };
     Ok(subject::dashboard_page(&nav, &s, &cards, &enabled_features, &data, &timeline))
 }

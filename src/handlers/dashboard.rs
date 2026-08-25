@@ -38,6 +38,10 @@ pub async fn index(
     let recent_incidents = recent_incidents(&state.pool, current_subject).await?;
     let recent_records = recent_records(&state.pool, current_subject).await?;
     let clinical = clinical_snapshot(&state.pool, current_subject).await?;
+    // Current insurance cards for the one-tap dashboard lane (PEMR-55 Part C):
+    // subject-scoped when a subject is in scope; all plans otherwise.
+    let insurance_tiles =
+        crate::handlers::insurance::load_dashboard_tiles(&state.pool, current_subject).await?;
 
     let nav = Nav {
         title: "Dashboard",
@@ -53,6 +57,7 @@ pub async fn index(
         recent_incidents: &recent_incidents,
         recent_records: &recent_records,
         clinical,
+        insurance_tiles: &insurance_tiles,
     };
     Ok(dashboard::render(&nav, &data))
 }
