@@ -2,7 +2,7 @@ use maud::{Markup, html};
 use uuid::Uuid;
 
 use crate::models::{
-    Incident, Record, Source, Subject, is_image_kind, record_kind_label, source_kind_label,
+    Condition, Incident, Record, Source, Subject, is_image_kind, record_kind_label, source_kind_label,
 };
 use crate::views::components as c;
 use crate::views::layout::{Nav, render_date, render_date_range, shell, subject_badge};
@@ -63,22 +63,23 @@ pub fn new_form(
     shell(nav, body)
 }
 
-pub fn detail_page(
-    nav: &Nav<'_>,
-    incident: &Incident,
-    subjects: &[Subject],
-    touching_sources: &[Source],
-    linked_records: &[Record],
-    candidate_records: &[Record],
-    linked_incidents: &[Incident],
-    candidate_incidents: &[Incident],
-) -> Markup {
-    let body = html! {
-        (c::card(html! {
-            div class="flex items-start justify-between gap-4 mb-2" {
-                h1 class="text-2xl font-semibold tracking-tight text-ink" { (incident.title) }
-                (c::button_link_secondary(format!("/incidents/{}/edit", incident.id), "Edit"))
-            }
+    pub fn detail_page(
+        nav: &Nav<'_>,
+        incident: &Incident,
+        subjects: &[Subject],
+        touching_sources: &[Source],
+        linked_records: &[Record],
+        candidate_records: &[Record],
+        linked_incidents: &[Incident],
+        candidate_incidents: &[Incident],
+        linked_conditions: &[Condition],
+    ) -> Markup {
+            let body = html! {
+                (c::card(html! {
+                    div class="flex items-start justify-between gap-4 mb-2" {
+                        h1 class="text-2xl font-semibold tracking-tight text-ink" { (incident.title) }
+                        (c::button_link_secondary(format!("/incidents/{}/edit", incident.id), "Edit"))
+                    }
             (c::meta_row(html! {
                 (subject_badge(subjects, incident.subject_id))
                 (c::badge_neutral(render_date_range(incident.occurred_at, &incident.occurred_precision, incident.ended_at, &incident.ended_precision)))
@@ -150,6 +151,31 @@ pub fn detail_page(
                             (c::button_primary("Link selected"))
                         }
                     }, linked_incidents.is_empty()))
+                }
+            },
+        ))
+
+        (c::lane(
+            html! { (c::section_heading("Diagnoses")) },
+            html! {
+                @if linked_conditions.is_empty() {
+                    (c::empty_state("No diagnoses attached."))
+                } @else {
+                    ul class="space-y-1.5" {
+                        @for cx in linked_conditions {
+                            li class="flex items-center justify-between gap-3 text-sm" {
+                                div class="flex items-center gap-2 flex-wrap" {
+                                    @if let Some(d) = cx.onset_date {
+                                        (c::badge_neutral(html! { (render_date(Some(d), "day")) }))
+                                    }
+                                    span class="font-medium" { (cx.name) }
+                                    @if !cx.status.is_empty() && cx.status != "active" {
+                                        (c::badge_neutral(html! { (cx.status) }))
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             },
         ))

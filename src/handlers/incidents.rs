@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::handlers::{AppState, load_subjects};
-use crate::models::{Incident, Record, Source, parse_date, parse_subject_filter};
+use crate::models::{Condition, Incident, Record, Source, parse_date, parse_subject_filter};
 use crate::viewer::ViewerContext;
 use crate::views::incident;
 use crate::views::layout::Nav;
@@ -227,6 +227,20 @@ pub async fn detail(
     .fetch_all(&state.pool)
     .await?;
 
+    // Diagnoses attached to this incident (EHI PAT_ENC_DX routed to the event,
+    // e.g. the clavicle fracture on the Fall-from-bed incident).
+    let linked_conditions = sqlx::query_as::<_, Condition>(
+        "select c.id, c.subject_id, c.name, c.code, c.code_system, c.status,
+                c.onset_date, coalesce(c.onset_precision,'day') as onset_precision, c.resolved_date,
+                c.severity, c.notes, c.source_id, c.external_id, c.external_url,
+                c.source_synced_at, c.created_at, c.updated_at
+           from conditions c where c.incident_id = $1
+          order by c.onset_date desc nulls last, c.created_at",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+
     let nav = Nav {
         title: &incident.title,
         current_path: "/incidents",
@@ -243,6 +257,7 @@ pub async fn detail(
         &candidates,
         &linked_incidents,
         &candidate_incidents,
+        &linked_conditions,
     ))
 }
 

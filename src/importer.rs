@@ -24,6 +24,9 @@ pub struct Counts {
     pub incidents: i64,
     pub immunizations: i64,
     pub observations: i64,
+    /// File-backed records imported (e.g. EHI clinical notes stored as `records`
+    /// rows with `kind='note'`). Empty/skip-only imports report 0 here.
+    pub records: i64,
     pub skipped: i64,
     /// Low-fidelity signals (parse failures, categories that came through empty,
     /// dropped entries) so an importing caller can react rather than assume a
@@ -453,6 +456,53 @@ enum CItem {
         effective: Date,
         category: &'static str,
     },
+    /// An encounter diagnosis (EHI `PAT_ENC_DX`): uncoded (Epic strips codes from
+    /// EHI exports), so we can't key on code. `acute` marks real-world events
+    /// (fracture, laceration, …) whose dx should attach to the incident on
+    /// `occurred` (or create one) rather than land as a bare condition. Dedup is
+    /// by `(subject, lower(name))` — same diagnosis name = same clinical
+    /// concept — merging onto an existing condition (incl. hand-backfilled
+    /// `ehi_dx_*` rows) instead of inserting a duplicate.
+    Dx {
+        name: String,
+        occurred: Option<Date>,
+        chronic: bool,
+        acute: bool,
+        comments: Option<String>,
+    },
+}
+
+/// A problem-list / dx name that is really an acute *event* (fracture,
+/// laceration, dislocation, …) rather than a chronic condition. PAT_ENC_DX
+/// records these as diagnoses but the clinical reality is an incident — route
+/// the dx to the incident on the same date (or create one). Complements
+/// [`is_birth_event`] (delivery/birth) which already routes to CItem::Incident.
+fn is_acute_event(name: &str) -> bool {
+    const ACUTE: &[&str] = &[
+        "fracture", "laceration", "dislocation", "sprain", "strain",
+        "concussion", "abrasion", "contusion", "burn", "bite", "foreign body",
+    ];
+    let n = name.to_lowercase();
+    ACUTE.iter().any(|k| n.contains(k))
+}
+
+/// Stable provenance key for concept-named rows without an Epic row id: lowercase,
+/// non-alphanumerics → `_`, then trim. Used for e.g. `ehi_dx_<slug>`.
+fn slugify(name: &str) -> String {
+    let mut s = String::with_capacity(name.len());
+    let mut pending_underscore = false;
+    for ch in name.chars().map(|c| c.to_ascii_lowercase()) {
+        if ch.is_ascii_alphanumeric() {
+            if pending_underscore && !s.is_empty() {
+                s.push('_');
+            }
+            pending_underscore = false;
+            s.push(ch);
+        } else {
+            pending_underscore = true;
+        }
+    }
+    s
 }
 
 /// True if a "problem" is really a delivery/birth *event*, not a chronic
@@ -1187,6 +1237,92 @@ async fn upsert_item(
                 .bind(panel_id).bind(effective).bind(source_id).bind(ext_id).execute(&mut *conn).await?;
             }
         }
+        CItem::Dx { name, occurred, chronic, acute, comments } => {
+            // EHI PAT_ENC_DX: no code (Epic strips codes from EHI exports), so
+            // dedup by clinical concept = subject + lowercase name. The same
+            // diagnosis repeats across encounter rows; merge onto the existing
+            // condition (incl. a hand-backfilled `ehi_dx_*` slug row) rather
+            // than insert a duplicate — this is what reconciles PEMR-50's key
+            // mismatch without migrating old rows.
+            let status = if chronic { "chronic" } else { "active" };
+            let comments = comments.as_deref();
+
+            // Acute events (fracture, laceration, …) escape to an incident: the
+            // clinical reality is an event, not a bare diagnosis. Attach the dx
+            // to the incident already on that date (e.g. the Fall-from-bed row
+            // for the clavicle fracture) or create one — don't double up.
+            let mut incident_id: Option<Uuid> = None;
+            if acute {
+                let date = match occurred {
+                    Some(d) => Some(d),
+                    // No date: fall back to the most recent incident for the
+                    // subject so the dx still reaches a plausible event. Rare.
+                    None => sqlx::query_scalar(
+                        "select id from incidents where subject_id=$1
+                          order by occurred_at desc nulls last limit 1",
+                    )
+                    .bind(subject_id)
+                    .fetch_optional(&mut *conn)
+                    .await?,
+                };
+                incident_id = match date {
+                    Some(d) => sqlx::query_scalar(
+                        "select id from incidents where subject_id=$1 and occurred_at=$2
+                           order by created_at desc limit 1",
+                    )
+                    .bind(subject_id)
+                    .bind(d)
+                    .fetch_optional(&mut *conn)
+                    .await?,
+                    None => None,
+                };
+                if incident_id.is_none() {
+                    incident_id = Some(sqlx::query_scalar(
+                        "insert into incidents (id, subject_id, title, narrative, occurred_at, occurred_precision)
+                         values ($1,$2,$3,'', $4,'day') returning id",
+                    )
+                    .bind(Uuid::now_v7())
+                    .bind(subject_id)
+                    .bind(&name)
+                    .bind(date)
+                    .fetch_one(&mut *conn)
+                    .await?);
+                }
+            }
+
+            let existing: Option<Uuid> = sqlx::query_scalar(
+                "select id from conditions where subject_id=$1 and lower(name)=lower($2) limit 1",
+            )
+            .bind(subject_id)
+            .bind(&name)
+            .fetch_optional(&mut *conn)
+            .await?;
+            if let Some(id) = existing {
+                sqlx::query(
+                    "update conditions set
+                         onset_date   = coalesce($2, onset_date),
+                         incident_id  = coalesce($3, incident_id),
+                         updated_at   = now()
+                       where id = $1",
+                )
+                .bind(id)
+                .bind(occurred)
+                .bind(incident_id)
+                .execute(&mut *conn)
+                .await?;
+                return Ok(());
+            }
+            sqlx::query(&format!(
+                "insert into conditions (id, subject_id, name, status, onset_date, notes, incident_id, source_id, external_id)
+                 values ($1,$2,$3,$4,$5,$6,$7,$8,$9){ON_CONFLICT}
+                    status=excluded.status, onset_date=excluded.onset_date,
+                    incident_id=coalesce(excluded.incident_id, conditions.incident_id),
+                    notes=coalesce(excluded.notes, conditions.notes), updated_at=now()"
+            ))
+            .bind(Uuid::now_v7()).bind(subject_id).bind(&name).bind(status)
+            .bind(occurred).bind(comments.unwrap_or("")).bind(incident_id)
+            .bind(source_id).bind(ext_id).execute(&mut *conn).await?;
+        }
     }
     Ok(())
 }
@@ -1196,6 +1332,7 @@ fn tally(c: &mut Counts, item: &CItem) {
         CItem::Allergy { .. } => c.allergies += 1,
         CItem::Medication { .. } => c.medications += 1,
         CItem::Condition { .. } => c.conditions += 1,
+        CItem::Dx { .. } => c.conditions += 1,
         CItem::Incident { .. } => c.incidents += 1,
         CItem::Immunization { .. } => c.immunizations += 1,
         CItem::Observation { .. } => c.observations += 1,
@@ -1207,6 +1344,7 @@ fn category_label(item: &CItem) -> &'static str {
         CItem::Allergy { .. } => "allergies",
         CItem::Medication { .. } => "medications",
         CItem::Condition { .. } => "conditions",
+        CItem::Dx { .. } => "conditions",
         CItem::Incident { .. } => "incidents",
         CItem::Immunization { .. } => "immunizations",
         CItem::Observation { category, .. } => {
@@ -1296,7 +1434,7 @@ pub async fn import_ccda_docs(
 }
 
 /// Dry-run summary of what a set of C-CDA documents would import (no DB writes).
-#[derive(Debug, Default, serde::Serialize)]
+#[derive(Default)]
 pub struct Preview {
     pub counts: Counts,
     pub labs: i64,
@@ -1335,6 +1473,12 @@ fn preview_push(p: &mut Preview, item: &CItem) {
             status.as_deref().map(|s| format!(" [{s}]")).unwrap_or_default(),
             onset.map(|d| format!(" ({d}")).unwrap_or_default(),
             resolved.map(|d| format!("→{d})")).or(onset.map(|_| ")".into())).unwrap_or_default(),
+        ),
+        CItem::Dx { name, occurred, chronic, acute, .. } => format!(
+            "dx         {name}{}{}{}",
+            occurred.map(|d| format!(" ({d})")).unwrap_or_default(),
+            if *chronic { " [chronic]" } else { "" },
+            if *acute { " [acute→incident]" } else { "" },
         ),
         CItem::Incident { title, occurred } => format!(
             "incident   {title}{}",
@@ -1567,6 +1711,48 @@ fn map_problems(tables: &Path, out: &mut Vec<(String, CItem)>) {
     }
 }
 
+fn map_encounter_dx(tables: &Path, out: &mut Vec<(String, CItem)>) {
+    let Some(t) = Tsv::open(tables, "PAT_ENC_DX") else { return };
+    for row in &t.rows {
+        let Some(name) = t.get(row, "DX_ID_DX_NAME") else { continue };
+        // Visit-reason / administration codes filed as "diagnoses" are not
+        // clinical conditions and would pollute the chart with noise rows.
+        let lower = name.to_lowercase();
+        if lower.contains("need for vaccination")
+            || lower.contains("need for influenza vaccination")
+            || lower.contains("well child examination")
+            || lower.contains("well child check")
+            || lower.contains("newborn under 8 days")
+        {
+            continue;
+        }
+        // PAT_ENC_DX has no stable row id and no code column; the concept key is
+        // (name, CONTACT_DATE). Pre-dedup same-name rows within the table to the
+        // earliest row so a diagnosis repeated across visits is one concept;
+        // upsert_item then merges onto any existing condition by name.
+        let exist = out
+            .iter()
+            .position(|(_, it)| matches!(it, CItem::Dx { name: n, .. } if n.eq_ignore_ascii_case(name)));
+        if exist.is_some() {
+            continue;
+        }
+        let occurred = t.get(row, "CONTACT_DATE").and_then(ehi_date);
+        out.push((
+            format!("ehi_dx_{}", slugify(name)),
+            CItem::Dx {
+                name: name.to_string(),
+                occurred,
+                chronic: t.get(row, "DX_CHRONIC_YN") == Some("Y"),
+                acute: is_acute_event(name),
+                comments: t
+                    .get(row, "COMMENTS")
+                    .or_else(|| t.get(row, "ANNOTATION"))
+                    .map(str::to_string),
+            },
+        ));
+    }
+}
+
 /// Vaccine name tokens: `ORDER_MED` lists vaccine *administrations* as med orders
 /// that duplicate the authoritative `IMMUNE` rows, so we skip them here.
 fn looks_like_vaccine(name: &str) -> bool {
@@ -1633,25 +1819,13 @@ fn collect_ehi(tables: &Path) -> (Vec<(String, CItem)>, Vec<String>) {
     let mut out = Vec::new();
     map_immunizations(tables, &mut out);
     map_problems(tables, &mut out);
+    map_encounter_dx(tables, &mut out);
     map_medications(tables, &mut out);
     map_vitals(tables, &mut out);
 
-    // Surface categories present in the export but out of the v1 parser's scope,
-    // so partial coverage isn't mistaken for a clean, complete import.
+    // Surface categories present in the export but out of the parser's scope, so
+    // partial coverage isn't mistaken for a clean, complete import.
     let mut warnings = Vec::new();
-    if let Some(t) = Tsv::open(tables, "PAT_ENC_DX") {
-        warnings.push(format!(
-            "{} encounter diagnoses (PAT_ENC_DX) not imported — v1 maps the problem list only \
-             (this can include acute events, e.g. a fracture)",
-            t.rows.len()
-        ));
-    }
-    if let Some(t) = Tsv::open(tables, "HNO_INFO") {
-        warnings.push(format!(
-            "{} clinical notes (RTF) not imported — v1 imports structured data only",
-            t.rows.len()
-        ));
-    }
     if Tsv::open(tables, "ORDER_RESULTS").is_none() {
         warnings.push(
             "no structured lab results in this export (ORDER_RESULTS empty) — any lab values are \
@@ -1665,25 +1839,125 @@ fn collect_ehi(tables: &Path) -> (Vec<(String, CItem)>, Vec<String>) {
     (out, warnings)
 }
 
-/// Import an Epic EHI export directory for `subject_id`, attributing rows to
-/// `source_id`. Commits atomically. Subject is caller-specified (never detected).
+/// A note present in the export as both an `HNO_INFO` metadata row and a file
+/// in `Rich Text/HNO_<NOTE_ID>_*.RTF`. Only file-backed notes are importable —
+/// an empty HNO_INFO row with no RTF payload would fabricate content.
+struct EhiNote {
+    note_id: String,
+    title: String,
+    occurred: Option<Date>,
+    /// Path to the RTF payload under the export root (`Rich Text/HNO_...RTF`).
+    rtf_path: PathBuf,
+}
+
+/// Collect the file-backed clinical notes (`HNO_INFO` + matching RTF files).
+/// Skips (with a warning) the HNO_INFO rows that have no RTF text in the export.
+fn map_notes(export_root: &Path) -> (Vec<EhiNote>, Vec<String>) {
+    let mut out = Vec::new();
+    let mut warnings = Vec::new();
+    let Some(tables) = ehi_tables_dir(export_root) else { return (out, warnings) };
+    let Some(t) = Tsv::open(&tables, "HNO_INFO") else { return (out, warnings) };
+    let rich_text = export_root.join("Rich Text");
+    let rtf_files: Vec<PathBuf> = match std::fs::read_dir(&rich_text) {
+        Ok(d) => d.filter_map(Result::ok).map(|e| e.path()).collect(),
+        Err(_) => {
+            warnings.push(format!("no Rich Text/ directory — {} notes skipped", t.rows.len()));
+            return (out, warnings);
+        }
+    };
+    for row in &t.rows {
+        let Some(note_id) = t.get(row, "NOTE_ID") else { continue };
+        // Match `Rich Text/HNO_<id>_*.RTF` (Epic suffixes with encounter/CSN ids).
+        let file = rtf_files.iter().find(|p| {
+            let Some(f) = p.file_name().and_then(|f| f.to_str()) else { return false };
+            f.starts_with(&format!("HNO_{note_id}_")) && f.to_ascii_uppercase().ends_with(".RTF")
+        });
+        let Some(path) = file else {
+            // Internal notes (Problem Overview / Sticky / empty) with no RTF text
+            // in the export: nothing to store, nothing to fabricate.
+            warnings.push(format!("note {note_id} has no RTF file in this export — skipped"));
+            continue;
+        };
+        let note_type = t
+            .get(row, "IP_NOTE_TYPE_C_NAME")
+            .or_else(|| t.get(row, "NOTE_TYPE_NOADD_C_NAME"))
+            .unwrap_or("Note");
+        let occurred = t
+            .get(row, "DATE_OF_SERVIC_DTTM")
+            .or_else(|| t.get(row, "CREATE_INSTANT_DTTM"))
+            .and_then(ehi_date);
+        let title = match occurred {
+            Some(d) => format!("{note_type} — {d}"),
+            // No service/create date (e.g. Problem Overviews carry only UPDATE_DATE)
+            // → keep the title stable and unambiguous with the note id.
+            None => format!("{note_type} — {note_id}"),
+        };
+        out.push(EhiNote {
+            note_id: note_id.to_string(),
+            title,
+            occurred,
+            rtf_path: path.clone(),
+        });
+    }
+    (out, warnings)
+}
+
+/// File-backed clinical notes (RTF) are stored under `files_dir` and upserted as
+/// `records` rows (kind='note'), keyed `ehi_note_<NOTE_ID>`.
 pub async fn import_ehi(
     pool: &PgPool,
     subject_id: Uuid,
     source_id: Uuid,
     export_dir: &Path,
+    files_dir: &Path,
 ) -> Result<Counts, sqlx::Error> {
     let Some(tables) = ehi_tables_dir(export_dir) else {
         let mut c = Counts::default();
         c.warnings.push(format!("no EHITables/ directory under {}", export_dir.display()));
         return Ok(c);
     };
-    let (items, warnings) = collect_ehi(&tables);
-    let mut c = Counts { warnings, ..Default::default() };
+    let (items, warnings0) = collect_ehi(&tables);
+    let (notes, note_warnings) = map_notes(export_dir);
+    let mut c = Counts {
+        warnings: [warnings0, note_warnings].concat(),
+        ..Default::default()
+    };
     let mut tx = pool.begin().await?;
     for (ext_id, item) in items {
         tally(&mut c, &item);
         upsert_item(&mut tx, subject_id, source_id, &ext_id, item).await?;
+    }
+    for note in &notes {
+        let bytes = tokio::fs::read(&note.rtf_path).await?;
+        let stored = crate::files::store_bytes(files_dir, &bytes, Some("rtf")).await?;
+        let sha = stored.sha256_hex.clone();
+        // Idempotent by provenance key (source_id, external_id): a re-import of the
+        // same export updates the existing note row in place rather than duplicating
+        // it. This also reconciles the 24 hand-backfilled `ehi_note_*` rows.
+        sqlx::query(
+            "insert into records
+                (id, subject_id, kind, title, notes, occurred_at,
+                 file_path, content_type, byte_size, sha256, source_id, external_id)
+             values ($1,$2,'note',$3,'',$4,$5,$6,$7,$8,$9,$10)
+             on conflict (source_id, external_id)
+               where source_id is not null and external_id is not null
+             do update set title=excluded.title, occurred_at=excluded.occurred_at,
+                 file_path=excluded.file_path, content_type=excluded.content_type,
+                 byte_size=excluded.byte_size, sha256=excluded.sha256, updated_at=now()",
+        )
+        .bind(Uuid::now_v7())
+        .bind(subject_id)
+        .bind(&note.title)
+        .bind(note.occurred)
+        .bind(&stored.relative_path)
+        .bind("application/rtf")
+        .bind(stored.byte_size)
+        .bind(&sha)
+        .bind(source_id)
+        .bind(format!("ehi_note_{}", note.note_id))
+        .execute(&mut *tx)
+        .await?;
+        c.records += 1;
     }
     // No Known Allergies is a positive assertion on the subject, not a row.
     if ehi_nkda(&tables) {
@@ -1703,10 +1977,25 @@ pub fn preview_ehi(export_dir: &Path) -> Preview {
         p.warnings.push(format!("no EHITables/ directory under {}", export_dir.display()));
         return p;
     };
-    let (items, warnings) = collect_ehi(&tables);
-    let mut p = Preview { warnings, ..Default::default() };
+    let (items, warnings0) = collect_ehi(&tables);
+    let (notes, note_warnings) = map_notes(export_dir);
+    let mut p = Preview {
+        counts: Counts {
+            records: notes.len() as i64,
+            ..Default::default()
+        },
+        warnings: [warnings0, note_warnings].concat(),
+        ..Default::default()
+    };
     for (_ext, item) in &items {
         preview_push(&mut p, item);
+    }
+    for note in &notes {
+        p.samples.push(format!(
+            "note       {} ({})",
+            note.title,
+            note.rtf_path.file_name().and_then(|f| f.to_str()).unwrap_or("")
+        ));
     }
     if ehi_nkda(&tables) {
         p.samples.push("allergy    NKDA — No Known Allergies asserted (sets subject flag)".to_string());

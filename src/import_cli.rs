@@ -100,8 +100,8 @@ pub async fn run(argv: &[String]) -> R<()> {
 /// Print import counts + fidelity warnings (shared by the doc and EHI paths).
 fn print_import_result(total: &importer::Counts) {
     eprintln!(
-        "\n✓ imported: {} allergies · {} meds · {} conditions · {} incidents · {} immunizations · {} observations",
-        total.allergies, total.medications, total.conditions, total.incidents, total.immunizations, total.observations
+        "\n✓ imported: {} allergies · {} meds · {} conditions · {} incidents · {} immunizations · {} observations · {} records",
+        total.allergies, total.medications, total.conditions, total.incidents, total.immunizations, total.observations, total.records
     );
     if total.warnings.is_empty() {
         eprintln!("  fidelity: clean (no warnings)");
@@ -133,14 +133,17 @@ async fn run_ehi(args: &Args, tables: &std::path::Path) -> R<()> {
                     patient only by an internal id, so we never guess the subject"
             .into());
     }
-    let database_url =
+        let database_url =
         std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL is required for --commit")?;
+    // RTF note payloads (and any uploaded files) land under FILES_DIR.
+    let files_dir = std::env::var("FILES_DIR")
+        .map_err(|_| "FILES_DIR is required for --commit (where note files are stored)")?;
     let pool = crate::db::connect(&database_url).await?;
     let subject_id = resolve_subject(&pool, args, &[]).await?;
     let source_id = ensure_source(&pool, &args.source).await?;
     eprintln!("\nimporting → subject {subject_id}, source '{}'", args.source);
 
-    let total = importer::import_ehi(&pool, subject_id, source_id, export_root).await?;
+    let total = importer::import_ehi(&pool, subject_id, source_id, export_root, std::path::Path::new(&files_dir)).await?;
     print_import_result(&total);
     Ok(())
 }
@@ -247,7 +250,7 @@ fn print_preview(p: &importer::Preview) {
     eprintln!("  conditions     {}", p.counts.conditions);
     eprintln!("  incidents      {}", p.counts.incidents);
     eprintln!("  immunizations  {}", p.counts.immunizations);
-    eprintln!("  observations   {}  ({} labs, {} vitals)", p.counts.observations, p.labs, p.vitals);
+    eprintln!("  records        {}", p.counts.records);
     eprintln!("───────────────────────────────────────────────");
     for s in p.samples.iter().take(40) {
         eprintln!("  {s}");

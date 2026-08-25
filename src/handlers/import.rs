@@ -117,7 +117,7 @@ pub async fn upload(
             ),
             Some(_) if action == "commit" => {
                 let source_id = importer::ensure_source(&state.pool, source_value).await?;
-                match importer::import_ehi(&state.pool, subject_id, source_id, &tmp).await {
+                match importer::import_ehi(&state.pool, subject_id, source_id, &tmp, &state.files_dir).await {
                     Ok(counts) => Outcome::Committed(counts),
                     Err(e) => Outcome::Error(format!("Import failed (nothing written): {e}")),
                 }
@@ -155,15 +155,21 @@ fn extract_ehi_tables(bytes: &[u8], dir: &Path) -> std::io::Result<()> {
         // (e.g. `EHITables\IMMUNE.tsv`). Normalize to forward slashes first.
         let name = entry.name().replace('\\', "/");
         // Accept "EHITables/FOO.tsv" or "<prefix>/EHITables/FOO.tsv"; the table
-        // files sit directly under EHITables/ (no nested subdirs).
-        let Some(rel) = name
-            .split_once("EHITables/")
-            .map(|(_, r)| r)
-            .filter(|r| r.ends_with(".tsv") && !r.contains('/'))
-        else {
+        // files sit directly under EHITables/ (no nested subdirs). Note payloads
+        // live in a sibling `Rich Text/HNO_...RTF` folder — extract those too so
+        // the notes import finds its files.
+        let (base, rel) = if let Some((_, r)) = name.split_once("EHITables/") {
+            // table files sit directly under EHITables/ (no nested subdirs)
+            if !r.ends_with(".tsv") || r.contains('/') {
+                continue;
+            }
+            (dir.join("EHITables"), r.to_string())
+        } else if name.starts_with("Rich Text/") {
+            (dir.join("Rich Text"), name.trim_start_matches("Rich Text/").to_string())
+        } else {
             continue;
         };
-        let dest = dir.join("EHITables").join(rel);
+        let dest = base.join(rel);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
