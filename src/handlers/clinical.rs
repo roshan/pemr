@@ -12,8 +12,8 @@ use crate::error::{AppError, AppResult};
 use crate::handlers::{AppState, load_subjects};
 use crate::models::{
     ALLERGY_CATEGORIES, ALLERGY_SEVERITIES, ALLERGY_STATUSES, CONDITION_STATUSES,
-    IMMUNIZATION_STATUSES, MEDICATION_STATUSES, OBSERVATION_CATEGORIES, Subject, empty_to_none,
-    parse_date,
+    IMMUNIZATION_STATUSES, MEDICATION_STATUSES, OBSERVATION_CATEGORIES, Medication, Source,
+    Subject, empty_to_none, parse_date,
 };
 use crate::viewer::ViewerContext;
 use crate::views::clinical_entry;
@@ -247,4 +247,40 @@ pub async fn add_observation(
     .bind(&display).bind(value_num).bind(empty_to_none(f.unit)).bind(effective_on).bind(f.notes)
     .execute(&state.pool).await?;
     Ok(back(id))
+}
+
+/// `/subjects/{subject_id}/medications/{med_id}` — one medication's full record.
+/// The chart card links here for detail (dose, route, frequency, dates, notes).
+pub async fn medication_detail(
+    State(state): State<AppState>,
+    viewer: ViewerContext,
+    Path((subject_id, med_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Markup> {
+    let subjects = load_subjects(&state.pool).await?;
+    let med = sqlx::query_as::<_, Medication>(
+        "select * from medications where id = $1 and subject_id = $2",
+    )
+    .bind(med_id)
+    .bind(subject_id)
+    .fetch_one(&state.pool)
+    .await?;
+    let source = match med.source_id {
+        Some(sid) => sqlx::query_as::<_, Source>("select * from sources where id = $1")
+            .bind(sid)
+            .fetch_optional(&state.pool)
+            .await?,
+        None => None,
+    };
+    let subject = sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
+        .bind(subject_id)
+        .fetch_one(&state.pool)
+        .await?;
+    let nav = Nav {
+        title: &med.name,
+        current_path: "/subjects",
+        subjects: &subjects,
+        current_subject: Some(subject_id),
+        viewer: &viewer,
+    };
+    Ok(crate::views::medication::detail_page(&nav, &subject, &med, source.as_ref()))
 }

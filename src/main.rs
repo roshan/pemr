@@ -205,6 +205,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .route("/subjects/{id}/allergies", post(handlers::clinical::add_allergy))
         .route("/subjects/{id}/medications", post(handlers::clinical::add_medication))
+        .route(
+            "/subjects/{id}/medications/{med_id}",
+            get(handlers::clinical::medication_detail),
+        )
         .route("/subjects/{id}/conditions", post(handlers::clinical::add_condition))
         .route("/subjects/{id}/observations", post(handlers::clinical::add_observation))
         .route(

@@ -203,10 +203,6 @@ pub fn badge_source(text: impl Render) -> Markup {
 pub fn badge_neutral(text: impl Render) -> Markup {
     html! { span class={(BADGE_BASE) " bg-slate-100 text-slate-700"} { (text) } }
 }
-/// An "ok / currently active" badge (emerald tint).
-pub fn badge_ok(text: impl Render) -> Markup {
-    html! { span class={(BADGE_BASE) " bg-emerald-100 text-emerald-800"} { (text) } }
-}
 
 // ---------------------------------------------------------------------------
 // Buttons + button-styled links

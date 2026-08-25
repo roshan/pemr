@@ -191,29 +191,30 @@ fn medications<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
         .bind(s.id)
         .fetch_all(pool)
         .await?;
-        // Row body: name + status accent + dates. The dose/frequency line is its
-        // own wrapped row — a long frequency must never push the card edge
+        // Ongoing = no end date yet, or an end date still in the future; those
+        // rows are bold. Finished courses (end date passed) are plain — no
+        // strike-through, no tag — and just show the end date. Every row links
+        // to the medication's detail page. The dose/frequency line is its own
+        // wrapped row — a long frequency must never push the card edge
         // (`panel_list_item` details are whitespace-nowrap, which is the bug
         // this fixes).
+        let today = crate::peds::today();
         let item = |m: &Medication| {
-            let active = m.status == "active";
+            let ongoing = m.ended_on.is_none_or(|e| e >= today);
             let dates = match (m.started_on, m.ended_on) {
                 (Some(s), Some(e)) => format!("{s} \u{2192} {e}"),
                 (Some(s), None) => format!("since {s}"),
                 (None, Some(e)) => format!("ended {e}"),
                 (None, None) => String::new(),
             };
+            let href = format!("/subjects/{}/medications/{}", s.id, m.id);
             c::panel_list_item(
                 html! {
                     div class="min-w-0" {
                         div class="flex items-center gap-2" {
-                            span class={ (if active { "text-ink font-medium" } else { "text-muted line-through" }) } {
+                            a href=(href)
+                              class={ (if ongoing { "font-medium text-ink hover:underline" } else { "text-ink/70 hover:underline" }) } {
                                 (m.name)
-                            }
-                            @if active {
-                                (c::badge_ok("active"))
-                            } @else {
-                                (c::badge_neutral("done"))
                             }
                         }
                         @if m.dose.is_some() || m.frequency.is_some() {

@@ -9,6 +9,7 @@ pub mod import;
 pub mod incident;
 pub mod insurance;
 pub mod layout;
+pub mod medication;
 pub mod milestones;
 pub mod provider;
 pub mod record;
