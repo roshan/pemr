@@ -477,7 +477,7 @@ enum CItem {
 /// records these as diagnoses but the clinical reality is an incident — route
 /// the dx to the incident on the same date (or create one). Complements
 /// [`is_birth_event`] (delivery/birth) which already routes to CItem::Incident.
-fn is_acute_event(name: &str) -> bool {
+pub(crate) fn is_acute_event(name: &str) -> bool {
     const ACUTE: &[&str] = &[
         "fracture", "laceration", "dislocation", "sprain", "strain",
         "concussion", "abrasion", "contusion", "burn", "bite", "foreign body",

@@ -10,9 +10,11 @@ use std::pin::Pin;
 
 use maud::{Markup, Render, html};
 use sqlx::PgPool;
+use time::Date;
+use uuid::Uuid;
 
 use crate::models::{
-    Allergy, Appointment, CareTeamMember, Condition, Immunization, InsuranceCoverageRow,
+    Allergy, Appointment, CareTeamMember, Immunization, InsuranceCoverageRow,
     Medication, Subject, VitalRow,
 };
 use crate::views::components as c;
@@ -106,30 +108,165 @@ fn full_list(items: impl Iterator<Item = Markup>) -> Markup {
 
 // ── modules ─────────────────────────────────────────────────────────────────
 
+/// One problem-list row carrying the fields the de-noised view needs, incl. the
+/// optional incident link (PEMR-50: an acute dx attaches to its incident).
+#[derive(sqlx::FromRow)]
+struct ProblemRow {
+    id: Uuid,
+    name: String,
+    status: String,
+    code: Option<String>,
+    code_system: Option<String>,
+    onset_date: Option<Date>,
+    onset_precision: String,
+    resolved_date: Option<Date>,
+    incident_id: Option<Uuid>,
+}
+
+/// Display classification for a problem row (PEMR-31): what kind of thing it is,
+/// so the active panel reads as truly current. Everything else that isn't a real
+/// diagnosis gets grouped away or flagged rather than polluting the list.
+enum ProblemKind {
+    /// A genuine current diagnosis.
+    Diagnosis,
+    /// A real-world event (fracture, fever, delivery) — filed as a condition by
+    /// the source but clinically an occurrence, not a chronic illness.
+    Event,
+    /// A non-diagnosis risk/context flag Epic files under Problems (AMA, IDM,
+    /// family history).
+    RiskFactor,
+    /// A preventive screening (encounter for risk assessment), not a condition.
+    Screening,
+}
+
+fn problem_kind(row: &ProblemRow) -> ProblemKind {
+    let n = row.name.to_lowercase();
+    if row.incident_id.is_some() || crate::importer::is_acute_event(&row.name) {
+        ProblemKind::Event
+    } else if n.starts_with("screening") {
+        ProblemKind::Screening
+    } else if [
+        "advanced maternal age",
+        "ama",
+        "infant of diabetic mother",
+        "family history",
+        "hereditary",
+        "genetic carrier",
+    ]
+    .iter()
+    .any(|t| n.contains(t))
+    {
+        ProblemKind::RiskFactor
+    } else {
+        ProblemKind::Diagnosis
+    }
+}
+
 fn problems<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
     Box::pin(async move {
-        let rows = sqlx::query_as::<_, Condition>(
-            "select * from conditions where subject_id = $1 and status = 'active'
+        let rows = sqlx::query_as::<_, ProblemRow>(
+            "select id, name, status, code, code_system, onset_date, onset_precision,
+                    resolved_date, incident_id
+               from conditions where subject_id = $1
               order by onset_date desc nulls last, created_at desc",
         )
         .bind(s.id)
         .fetch_all(pool)
         .await?;
-        let item = |x: &Condition| c::panel_list_item(
-            html! { (x.name) },
-            html! { @if let Some(d) = x.onset_date { "since " (d) } },
-        );
+
+        let (active, resolved): (Vec<_>, Vec<_>) = rows
+            .into_iter()
+            .partition(|r| !(r.status == "resolved" || r.status == "remission"));
+        let resolved_len = resolved.len();
+
+        // Flag waveform — the detail line (right side) of an active row.
+        let detail = |r: &ProblemRow| {
+            let mut line = String::new();
+            if let Some(d) = r.resolved_date {
+                line.push_str(&format!("resolved {d}"));
+            } else if let Some(d) = r.onset_date {
+                line.push_str(&format!("since {d}"));
+            }
+            match problem_kind(r) {
+                ProblemKind::Diagnosis => line,
+                ProblemKind::Event => {
+                    if !line.is_empty() {
+                        line.push(' ');
+                    }
+                    line.push_str("· event");
+                    line
+                }
+                ProblemKind::Screening => {
+                    if !line.is_empty() {
+                        line.push(' ');
+                    }
+                    line.push_str("· screening");
+                    line
+                }
+                ProblemKind::RiskFactor => {
+                    if !line.is_empty() {
+                        line.push(' ');
+                    }
+                    line.push_str("· risk factor");
+                    line
+                }
+            }
+        };
+
+        let item = |r: &ProblemRow| {
+            c::panel_list_item(
+                html! {
+                    @if r.incident_id.is_some() {
+                        a href={ "/incidents/" (r.incident_id.unwrap()) } class="text-ink hover:text-brand hover:no-underline" {
+                            (r.name)
+                        }
+                    } @else {
+                        (r.name)
+                    }
+                    @if matches!(problem_kind(r), ProblemKind::Event | ProblemKind::RiskFactor | ProblemKind::Screening) {
+                        " "
+                        @if matches!(problem_kind(r), ProblemKind::Event) {
+                            (c::badge_warn("event"))
+                        } @else if matches!(problem_kind(r), ProblemKind::RiskFactor) {
+                            (c::badge_neutral("risk factor"))
+                        } @else {
+                            (c::badge_neutral("screening"))
+                        }
+                    }
+                },
+                html! { (detail(r)) },
+            )
+        };
+
         Ok(Some(match mode {
-            Mode::Card => card("Problems", None, if rows.is_empty() {
+            Mode::Card => card("Problems", None, if active.is_empty() && resolved.is_empty() {
                 c::empty_state("No active problems")
             } else {
-                truncated_list(rows.iter().map(item), rows.len(), None)
+                html! {
+                    @if !active.is_empty() {
+                        (truncated_list(active.iter().map(item), active.len(), None))
+                    }
+                    @if resolved_len > 0 {
+                        div class="mt-2" {
+                            (c::collapse_section(
+                                format!("Resolved ({resolved_len})"),
+                                html! { (full_list(resolved.iter().map(item))) },
+                                false,
+                            ))
+                        }
+                    }
+                }
             }),
-            Mode::Print => print_section("Active problems", if rows.is_empty() {
-                c::empty_state("None recorded")
-            } else {
-                full_list(rows.iter().map(item))
-            }),
+            Mode::Print => html! {
+                (print_section("Active problems", if active.is_empty() {
+                    c::empty_state("None recorded")
+                } else {
+                    full_list(active.iter().map(item))
+                }))
+                @if resolved_len > 0 {
+                    (print_section("Resolved problems", full_list(resolved.iter().map(item))))
+                }
+            },
         }))
     })
 }
