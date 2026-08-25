@@ -141,7 +141,12 @@ enum ProblemKind {
 
 fn problem_kind(row: &ProblemRow) -> ProblemKind {
     let n = row.name.to_lowercase();
-    if row.incident_id.is_some() || crate::importer::is_acute_event(&row.name) {
+    // Event = incident-linked, an import-side acute name (fracture/laceration…),
+    // or a source name that literally flags itself acute ("Fever (acute)").
+    if row.incident_id.is_some()
+        || crate::importer::is_acute_event(&row.name)
+        || n.contains("(acute)") || n.starts_with("fever ")
+    {
         ProblemKind::Event
     } else if n.starts_with("screening") {
         ProblemKind::Screening
@@ -668,4 +673,63 @@ pub async fn snapshot_counts(pool: &PgPool, s: &Subject) -> Result<SnapshotCount
         appointments: n(pool, "select count(*) from appointments where subject_id=$1 and starts_at>=now()", s.id).await?,
         vaccines_due,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(name: &str, incident: Option<Uuid>) -> ProblemRow {
+        ProblemRow {
+            id: Uuid::now_v7(),
+            name: name.into(),
+            status: "active".into(),
+            code: None,
+            code_system: None,
+            onset_date: None,
+            onset_precision: "day".into(),
+            resolved_date: None,
+            incident_id: incident,
+        }
+    }
+
+    #[test]
+    fn incident_linked_dx_is_an_event() {
+        assert!(matches!(
+            problem_kind(&row("Closed nondisplaced fracture of right clavicle", Some(Uuid::now_v7()))),
+            ProblemKind::Event
+        ));
+    }
+
+    #[test]
+    fn acute_names_and_acute_flagged_names_are_events() {
+        for n in ["Laceration of hand", "Fever (acute)", "Forearm fracture, initial"] {
+            assert!(matches!(problem_kind(&row(n, None)), ProblemKind::Event), "{n}");
+        }
+    }
+
+    #[test]
+    fn screening_names_are_screenings() {
+        for n in ["Screening for lead exposure", "Screening, iron deficiency anemia"] {
+            assert!(matches!(problem_kind(&row(n, None)), ProblemKind::Screening), "{n}");
+        }
+    }
+
+    #[test]
+    fn risk_factors_are_flagged() {
+        for n in [
+            "Advanced maternal age (AMA) primigravida",
+            "IDM (infant of diabetic mother)",
+            "Family history of diabetes",
+        ] {
+            assert!(matches!(problem_kind(&row(n, None)), ProblemKind::RiskFactor), "{n}");
+        }
+    }
+
+    #[test]
+    fn everyday_diagnoses_stay_diagnoses() {
+        for n in ["Gastroesophageal reflux disease in infant", "Impetigo", "Asthma"] {
+            assert!(matches!(problem_kind(&row(n, None)), ProblemKind::Diagnosis), "{n}");
+        }
+    }
 }
