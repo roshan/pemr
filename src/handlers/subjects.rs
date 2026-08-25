@@ -170,11 +170,9 @@ pub async fn detail(
 
     let cards =
         crate::subject_modules::render_all(&state.pool, &s, crate::subject_modules::Mode::Card).await?;
-    // Opt-in per-subject feature modules (PEMR-45): milestones etc. Absent until
-    // the viewer adds them from the chart.
-    let feature_area = crate::handlers::milestones::render_feature_area(&state.pool, &s).await?;
     // Which feature modules the subject has enabled — gates the header buttons
-    // (e.g. growth's "Growth charts") exactly like the feature area's surfaces.
+    // (e.g. growth's "Growth charts"); content renders in the clinical summary
+    // only, management lives on the Edit Profile page.
     let enabled_features = crate::feature_registry::enabled_keys(&state.pool, s.id).await?;
     let timeline = crate::handlers::dashboard::load_timeline(&state.pool, Some(id), "1y", None, None).await?;
 
@@ -194,7 +192,7 @@ pub async fn detail(
         // The chart renders the full clinical summary below; no snapshot needed.
         clinical: None,
     };
-    Ok(subject::dashboard_page(&nav, &s, &cards, &feature_area, &enabled_features, &data, &timeline))
+    Ok(subject::dashboard_page(&nav, &s, &cards, &enabled_features, &data, &timeline))
 }
 
 
@@ -433,7 +431,10 @@ pub async fn edit_form(
         current_subject: Some(id),
         viewer: &viewer,
     };
-    Ok(subject::edit_form(&nav, &s, None))
+    // Feature modules are edited here (not on the chart — the chart shows only
+    // content). The panel lists every registry feature + its Enable/Disable.
+    let feature_panel = crate::handlers::milestones::render_feature_panel(&state.pool, &s).await?;
+    Ok(subject::edit_form(&nav, &s, None, &feature_panel))
 }
 
 pub async fn edit(

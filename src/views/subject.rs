@@ -66,7 +66,6 @@ pub fn dashboard_page(
     nav: &Nav<'_>,
     subject: &Subject,
     cards: &[Markup],
-    feature_area: &Markup,
     enabled_features: &[String],
     data: &DashboardData<'_>,
     timeline: &dashboard::TimelineData,
@@ -77,17 +76,12 @@ pub fn dashboard_page(
     let body = html! {
         (bio_header(subject, enabled_features))
         // The clinical summary is an ordered set of self-contained modules
-        // (`subject_modules`); this page just lays out whatever cards they
-        // produced — it has no per-feature knowledge.
+        // (`subject_modules`); this page just lays out whatever gated cards
+        // they produced — it has no per-feature knowledge. Feature management
+        // (enable/disable) lives on the subject's Edit Profile page.
         section class="mb-6" {
             (c::section_heading("Clinical summary"))
             (c::card_grid(html! { @for card in cards { (card) } }))
-        }
-        // Opt-in per-subject feature modules (`feature_registry`): the container
-        // is `#subject-features`, swapped in place when a feature is added/removed.
-        section class="mb-6" {
-            (c::section_heading("Feature modules"))
-            (feature_area)
         }
         section class="mb-6" {
             div class="flex items-baseline justify-between mb-2" {
@@ -104,28 +98,6 @@ pub fn dashboard_page(
     shell(nav, body)
 }
 
-
-/// The feature-area surface for the "allergies" opt-in module: confirms the
-/// feature is enabled and offers removal (disable, never delete — allergy
-/// records are untouched). Allergies have no dedicated page; the surface *is*
-/// the clinical-summary card, so this card is purely a management control.
-pub fn allergy_feature_card(subject: &Subject) -> Markup {
-    let sid = subject.id;
-    let body = html! {
-        p class="text-xs text-muted mt-2" {
-            "The active allergy list shows in this subject\u{2019}s clinical summary."
-        }
-        div class="mt-3 flex flex-wrap gap-2" {
-            (c::hx_action_button(
-                "Remove",
-                &format!("/subjects/{sid}/features/allergies/remove"),
-                "#subject-features",
-                true,
-            ))
-        }
-    };
-    c::foldable_card(html! { "Allergies " (c::badge_neutral("enabled")) }, body, true)
-}
 
 fn bio_header(subject: &Subject, enabled_features: &[String]) -> Markup {
     let bio_parts: Vec<Markup> = [
@@ -170,7 +142,12 @@ fn bio_header(subject: &Subject, enabled_features: &[String]) -> Markup {
     }
 }
 
-pub fn edit_form(nav: &Nav<'_>, subject: &Subject, error: Option<&str>) -> Markup {
+pub fn edit_form(
+    nav: &Nav<'_>,
+    subject: &Subject,
+    error: Option<&str>,
+    feature_panel: &Markup,
+) -> Markup {
     let body = html! {
         (c::page_title("Edit subject"))
         @if let Some(e) = error { (c::alert_danger(e)) }
@@ -206,6 +183,17 @@ pub fn edit_form(nav: &Nav<'_>, subject: &Subject, error: Option<&str>) -> Marku
                 (c::button_link_secondary(format!("/subjects/{}", subject.id), "Cancel"))
             }
         }))
+        // Feature modules are edited here, not on the chart: the chart shows
+        // only content, this panel is where a module is enabled/disabled.
+        // Disabling hides the content but never deletes the underlying data.
+        section class="mt-8" {
+            (c::section_heading("Feature modules"))
+            p class="text-xs text-muted mb-3" {
+                "Modules show on the chart when enabled. Disabling hides the "
+                "content — the underlying records are never deleted."
+            }
+            (feature_panel)
+        }
     };
     shell(nav, body)
 }

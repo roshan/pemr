@@ -1,17 +1,18 @@
 //! Developmental-milestone tracker UI (PEMR-40 / 41 / 42 / 44). Pure rendering —
-//! the handlers load the data. The checklist is an inline, feature-gated section
-//! on the subject chart; marking a milestone or stepping between checkpoints
-//! HTMX-swaps `#milestone-checklist` in place. The "Act Early" guidance is passive
-//! (a closed disclosure), never an automatic alert. The required
-//! tracking-vs-screening disclaimer (`milestones::DISCLAIMER`) is shown in the
-//! module and on both the progress + printable-summary pages.
+//! the handlers load the data. A milestone **content** card (per-period
+//! completion) renders in the subject's clinical summary when the feature is
+//! enabled; the full interactive checklist lives on the detail page. The
+//! HTMX-swapped `feature_panel` (Enable/Disable per feature) lives on the
+//! subject's Edit Profile page. The "Act Early" guidance is passive (a closed
+//! disclosure), never an automatic alert. The required tracking-vs-screening
+//! disclaimer (`milestones::DISCLAIMER`) is shown in the module and on both the
+//! progress + printable-summary pages.
 
 use std::collections::HashMap;
 
 use maud::{Markup, html};
 use uuid::Uuid;
 
-use crate::feature_registry::FeatureDef;
 use crate::milestone_age::{self, TrackerAge};
 use crate::milestones::{self, Milestone};
 use crate::models::{MilestoneResponse, Subject};
@@ -135,12 +136,14 @@ fn act_early_body() -> Markup {
     }
 }
 
-/// The milestone surface on the subject chart (feature area): a **foldable card**
+/// The milestone tracker's chart **content** card (gated by the "milestones"
+/// feature; rendered by `subject_modules::milestones`): a **foldable card**
 /// whose body is a **per-period completion** breakdown (every checkpoint 2mo–5y
 /// with a met/total meter, the current age flagged), plus the required
-/// disclaimer, a link to the full detail page, and a Remove control. The
-/// interactive checklist lives on the detail page, not here. `per_period` is
-/// `(checkpoint_months, met, total)` for each checkpoint, in order.
+/// disclaimer and a link to the full detail page. Management (enable/disable)
+/// lives on the Edit Profile page, not here. The interactive checklist lives on
+/// the detail page. `per_period` is `(checkpoint_months, met, total)` for each
+/// checkpoint, in order.
 pub fn summary_card(
     subject: &Subject,
     tracker: Option<TrackerAge>,
@@ -184,14 +187,8 @@ pub fn summary_card(
             None => (c::alert_info("Set this child\u{2019}s date of birth to use the milestone tracker.")),
         }
         p class="text-xs text-muted mt-3" { (milestones::DISCLAIMER) }
-        div class="mt-3 flex flex-wrap gap-2" {
+        div class="mt-3" {
             (c::button_link_secondary(format!("/subjects/{sid}/milestones"), "Open milestones \u{2192}"))
-            (c::hx_action_button(
-                "Remove",
-                &format!("/subjects/{sid}/features/milestones/remove"),
-                "#subject-features",
-                true,
-            ))
         }
     };
     c::foldable_card(summary, body, true)
@@ -239,29 +236,48 @@ pub fn needs_dob(subject: &Subject) -> Markup {
     }
 }
 
-/// The `#subject-features` container: each enabled feature's surface, then the
-/// "Add feature" picker for the rest. Swapped whole on add/remove.
-pub fn feature_area(subject_id: Uuid, surfaces: Vec<Markup>, add_options: &[&FeatureDef]) -> Markup {
-    html! {
-        div id="subject-features" {
-            @for s in &surfaces {
-                div class="mb-4" { (s) }
-            }
-            @if !add_options.is_empty() {
-                div class="mt-1" {
-                    p class="text-xs text-muted mb-1" { "Add a feature module to this chart:" }
-                    div class="flex flex-wrap gap-2" {
-                        @for f in add_options {
-                            (c::hx_action_button(
-                                format!("+ {}", f.label),
-                                &format!("/subjects/{subject_id}/features/{}", f.key),
-                                "#subject-features",
-                                false,
-                            ))
+/// The Edit Profile "Feature modules" panel: every registry feature with its
+/// current state and an Enable/Disable control. Lives on `/subjects/{id}/edit`,
+/// not the chart — the chart shows only content. Container is
+/// `#feature-modules`, swapped whole on toggle (disable never deletes data).
+pub fn feature_panel(subject_id: Uuid, enabled: &[String]) -> Markup {
+    let rows: Vec<Markup> = crate::feature_registry::FEATURES
+        .iter()
+        .map(|f| {
+            let on = enabled.iter().any(|e| e == f.key);
+            let ctl = if on {
+                c::hx_action_button(
+                    "Disable",
+                    &format!("/subjects/{subject_id}/features/{}/disable", f.key),
+                    "#feature-modules",
+                    true,
+                )
+            } else {
+                c::hx_action_button(
+                    "Enable",
+                    &format!("/subjects/{subject_id}/features/{}", f.key),
+                    "#feature-modules",
+                    false,
+                )
+            };
+            html! {
+                div class="flex items-start justify-between gap-3 border-b border-line py-3 last:border-b-0" {
+                    div class="min-w-0" {
+                        div class="flex items-center gap-2 flex-wrap" {
+                            span class="text-sm font-semibold text-ink" { (f.label) }
+                            @if on { (c::badge_neutral("enabled")) }
+                            @else { span class="text-xs text-muted" { "off" } }
                         }
+                        p class="text-xs text-muted mt-0.5" { (f.description) }
                     }
+                    div class="shrink-0" { (ctl) }
                 }
             }
+        })
+        .collect();
+    html! {
+        div id="feature-modules" class="rounded-lg border border-line bg-surface p-2 shadow-xs" {
+            @for row in rows { (row) }
         }
     }
 }

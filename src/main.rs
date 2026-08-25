@@ -173,7 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             post(handlers::milestones::enable_feature),
         )
         .route(
-            "/subjects/{id}/features/{key}/remove",
+            "/subjects/{id}/features/{key}/disable",
             post(handlers::milestones::disable_feature),
         )
         // developmental milestone tracker (PEMR-35). The checklist + mark endpoints

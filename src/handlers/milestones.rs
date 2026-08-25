@@ -1,7 +1,10 @@
 //! Developmental-milestone tracker handlers (PEMR-40/41/42/44) + the per-subject
-//! feature registry's add/remove endpoints (PEMR-45). The checklist and the
-//! feature area are server-rendered HTML partials swapped in place by HTMX; the
-//! progress + printable-summary pages are full pages.
+//! feature registry's enable/disable endpoints (PEMR-45). Feature *content*
+//! renders as gated cards in the subject's clinical summary
+//! (`subject_modules`); enablement is managed on the subject's Edit Profile
+//! page. The Edit Profile panel and the milestone checklist are HTML partials
+//! swapped in place by HTMX; the progress + printable-summary pages are full
+//! pages.
 
 use axum::extract::{Form, Path, Query, State};
 use maud::Markup;
@@ -76,31 +79,27 @@ fn per_period_stats(responses: &[MilestoneResponse]) -> Vec<(i32, usize, usize)>
         .collect()
 }
 
-/// The milestone surface for the chart feature area: a foldable per-period
-/// completion card linking to the detail page. The interactive checklist is NOT
-/// here.
-async fn milestone_summary_card(pool: &sqlx::PgPool, s: &Subject) -> AppResult<Markup> {
+/// The milestone tracker's chart **content** card: a foldable per-period
+/// completion card linking to the detail page (rendered by the `subject_modules`
+/// `milestones` module when the feature is enabled). The interactive checklist is
+/// NOT here. `sqlx::Error` keeps it callable from `subject_modules` module fns.
+pub(crate) async fn milestone_summary_card(
+    pool: &sqlx::PgPool,
+    s: &Subject,
+) -> Result<Markup, sqlx::Error> {
     let tracker = tracker_for(s);
     let responses = load_responses(pool, s.id).await?;
     let per_period = per_period_stats(&responses);
     Ok(views::milestones::summary_card(s, tracker, &per_period))
 }
 
-/// Render the `#subject-features` area: every enabled feature's surface + the
-/// "Add feature" picker. Shared by the chart page and the add/remove handlers.
-pub async fn render_feature_area(pool: &sqlx::PgPool, s: &Subject) -> AppResult<Markup> {
+/// The Edit Profile "Feature modules" panel: every registry feature with its
+/// current on/off state and an Enable/Disable control. Lives on the subject's
+/// Edit Profile page (not the chart — the chart shows only content); swapped in
+/// place by HTMX when a feature is enabled/disabled.
+pub async fn render_feature_panel(pool: &sqlx::PgPool, s: &Subject) -> AppResult<Markup> {
     let enabled = feature_registry::enabled_keys(pool, s.id).await?;
-    let mut surfaces: Vec<Markup> = Vec::new();
-    for key in &enabled {
-        match key.as_str() {
-            "milestones" => surfaces.push(milestone_summary_card(pool, s).await?),
-            "growth" => surfaces.push(crate::views::growth::feature_card(s)),
-            "allergies" => surfaces.push(crate::views::subject::allergy_feature_card(s)),
-            _ => {}
-        }
-    }
-    let available = feature_registry::available_to_add(pool, s.id).await?;
-    Ok(views::milestones::feature_area(s.id, surfaces, &available))
+    Ok(views::milestones::feature_panel(s.id, &enabled))
 }
 
 /// `GET /subjects/{id}/milestones` — the dedicated milestone detail page (the
@@ -133,7 +132,7 @@ pub async fn detail(
 }
 
 /// `POST /subjects/{id}/features/{key}` — enable a feature (idempotent) and swap
-/// the feature area back in so the surface pops in with no reload.
+/// the Edit Profile panel back in so the control updates with no reload.
 pub async fn enable_feature(
     State(state): State<AppState>,
     Path((id, key)): Path<(Uuid, String)>,
@@ -143,18 +142,19 @@ pub async fn enable_feature(
     }
     let s = load_subject(&state.pool, id).await?;
     feature_registry::enable(&state.pool, id, &key).await?;
-    render_feature_area(&state.pool, &s).await
+    render_feature_panel(&state.pool, &s).await
 }
 
-/// `POST /subjects/{id}/features/{key}/remove` — disable a feature. Hides the
-/// surface; the module's underlying data is preserved (disable, never delete).
+/// `POST /subjects/{id}/features/{key}/disable` — disable a feature. Hides the
+/// chart content; the module's underlying data is preserved (disable, never
+/// delete).
 pub async fn disable_feature(
     State(state): State<AppState>,
     Path((id, key)): Path<(Uuid, String)>,
 ) -> AppResult<Markup> {
     let s = load_subject(&state.pool, id).await?;
     feature_registry::disable(&state.pool, id, &key).await?;
-    render_feature_area(&state.pool, &s).await
+    render_feature_panel(&state.pool, &s).await
 }
 
 #[derive(Debug, Deserialize)]

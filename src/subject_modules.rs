@@ -40,6 +40,7 @@ pub const MODULES: &[Module] = &[
     immunizations,
     vitals,
     growth,
+    milestones,
     appointments,
     care_team,
     insurance,
@@ -417,6 +418,24 @@ fn care_team<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
                 full_list(rows.iter().map(item))
             }),
         }))
+    })
+}
+
+/// The milestone tracker's chart **content** card: a per-period completion card
+/// linking to the checklist detail page. Like the other opt-in features
+/// (growth, allergies), this is a gated card in the clinical summary — the
+/// chart shows content only. Management (enable/disable) lives on the Edit
+/// Profile page, whose panel is rendered by the milestone views'
+/// `feature_panel`.
+fn milestones<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
+    Box::pin(async move {
+        if mode == Mode::Print {
+            return Ok(None);
+        }
+        if !crate::feature_registry::is_enabled(pool, s.id, "milestones").await? {
+            return Ok(None);
+        }
+        Ok(Some(crate::handlers::milestones::milestone_summary_card(pool, s).await?))
     })
 }
 
