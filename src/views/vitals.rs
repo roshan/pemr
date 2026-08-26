@@ -72,7 +72,7 @@ pub fn page(nav: &Nav<'_>, subject: &Subject, rows: &[ObservationRow]) -> Markup
                             @if let Group::Panel(members) = g {
                                 tr class="bg-slate-100" {
                                     td colspan="5" class="px-3 py-1.5 text-xs font-medium text-slate-600" {
-                                        "Lab panel — " (members[0].effective_on) " (" (members.len()) " results)"
+                                        "Result panel — " (members[0].effective_on) " (" (members.len()) " results)"
                                     }
                                 }
                                 @for r in members {
