@@ -117,6 +117,7 @@ struct ProblemRow {
     status: String,
     code: Option<String>,
     code_system: Option<String>,
+    icd10_code: Option<String>,
     onset_date: Option<Date>,
     onset_precision: String,
     resolved_date: Option<Date>,
@@ -167,11 +168,41 @@ fn problem_kind(row: &ProblemRow) -> ProblemKind {
     }
 }
 
+/// The standardized code(s) of a problem row, formatted for the detail line:
+/// "· SNOMED 11687002 · ICD-10 O24.419". The ICD-10 translation is captured at
+/// import (PEMR-30) and rendered only when present.
+fn code_tags(code_system: Option<&str>, code: Option<&str>, icd10_code: Option<&str>) -> String {
+    let mut out = String::new();
+    // The stored primary code carries its own system (SNOMED from C-CDA, or a
+    // hand-entered ICD-10). Show it under that system label.
+    if let (Some(cs), Some(cd)) = (code_system, code) {
+        if cs == "SNOMED" || cs == "ICD-10" {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(&format!("· {cs} {cd}"));
+        }
+    }
+    // The ICD-10 translation captured alongside a SNOMED primary (PEMR-30).
+    // De-dupe: when the primary itself is ICD-10 (code_system == "ICD-10") and
+    // holds the same value, it's already printed above under its own label.
+    if let Some(cd) = icd10_code {
+        let dupe = code_system.as_deref() == Some("ICD-10") && code.as_deref() == Some(cd);
+        if !dupe {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(&format!("· ICD-10 {cd}"));
+        }
+    }
+    out
+}
+
 fn problems<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
     Box::pin(async move {
         let rows = sqlx::query_as::<_, ProblemRow>(
             "select id, name, status, code, code_system, onset_date, onset_precision,
-                    resolved_date, incident_id
+                    resolved_date, icd10_code, incident_id
                from conditions where subject_id = $1
               order by onset_date desc nulls last, created_at desc",
         )
@@ -192,30 +223,26 @@ fn problems<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
             } else if let Some(d) = r.onset_date {
                 line.push_str(&format!("since {d}"));
             }
-            match problem_kind(r) {
-                ProblemKind::Diagnosis => line,
-                ProblemKind::Event => {
-                    if !line.is_empty() {
-                        line.push(' ');
-                    }
-                    line.push_str("· event");
-                    line
+            let kind_tag = match problem_kind(r) {
+                ProblemKind::Diagnosis => None,
+                ProblemKind::Event => Some("· event"),
+                ProblemKind::Screening => Some("· screening"),
+                ProblemKind::RiskFactor => Some("· risk factor"),
+            };
+            if let Some(tag) = kind_tag {
+                if !line.is_empty() {
+                    line.push(' ');
                 }
-                ProblemKind::Screening => {
-                    if !line.is_empty() {
-                        line.push(' ');
-                    }
-                    line.push_str("· screening");
-                    line
-                }
-                ProblemKind::RiskFactor => {
-                    if !line.is_empty() {
-                        line.push(' ');
-                    }
-                    line.push_str("· risk factor");
-                    line
-                }
+                line.push_str(tag);
             }
+            let codes = code_tags(r.code_system.as_deref(), r.code.as_deref(), r.icd10_code.as_deref());
+            if !codes.is_empty() {
+                if !line.is_empty() {
+                    line.push(' ');
+                }
+                line.push_str(&codes);
+            }
+            line
         };
 
         let item = |r: &ProblemRow| {
@@ -237,6 +264,13 @@ fn problems<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
                         } @else {
                             (c::badge_neutral("screening"))
                         }
+                    }
+                    @if r.status == "chronic" {
+                        " "
+                        (c::badge_warn("chronic"))
+                    } @else if r.status == "remission" {
+                        " "
+                        (c::badge_neutral("remission"))
                     }
                 },
                 html! { (detail(r)) },
@@ -686,6 +720,7 @@ mod tests {
             status: "active".into(),
             code: None,
             code_system: None,
+            icd10_code: None,
             onset_date: None,
             onset_precision: "day".into(),
             resolved_date: None,
@@ -731,5 +766,23 @@ mod tests {
         for n in ["Gastroesophageal reflux disease in infant", "Impetigo", "Asthma"] {
             assert!(matches!(problem_kind(&row(n, None)), ProblemKind::Diagnosis), "{n}");
         }
+    }
+
+    #[test]
+    fn code_tags_renders_snomed_and_icd10() {
+        assert_eq!(
+            code_tags(Some("SNOMED"), Some("11687002"), Some("O24.419")),
+            "· SNOMED 11687002 · ICD-10 O24.419"
+        );
+        assert_eq!(code_tags(Some("SNOMED"), Some("64498002"), None), "· SNOMED 64498002");
+        // No codes → empty, so the detail line stays onset-only.
+        assert_eq!(code_tags(None, None, None), "");
+        // A hand-entered ICD-10-only row (no translation) still shows its code.
+        assert_eq!(code_tags(Some("ICD-10"), Some("R50.9"), None), "· ICD-10 R50.9");
+        // Unknown systems are not decorative — no label vocabulary, no tag.
+        assert_eq!(code_tags(Some("LOINC"), Some("1234-5"), None), "");
+        // Defense-in-depth: if the primary is ICD-10 and icd10_code mirrors the
+        // same value, print it once, not twice.
+        assert_eq!(code_tags(Some("ICD-10"), Some("R50.9"), Some("R50.9")), "· ICD-10 R50.9");
     }
 }

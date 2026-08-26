@@ -149,6 +149,25 @@ pub async fn import_fhir(
                 let (name, code, system) = r.get("code").map(codeable).unwrap_or((None, None, None));
                 let name = name.unwrap_or_else(|| "Unknown condition".into());
                 let cs = code_system_label(system.as_deref(), &code);
+                // A condition's code.coding array often carries a SNOMED primary
+                // AND an ICD-10 code; grab the ICD-10 one for the icd10 column.
+                // When the PRIMARY coding already is ICD-10 (the scan below would
+                // find the same value `code` already holds), don't mirror it into
+                // icd10_code — the row would render the same code twice.
+                let icd10 = r
+                    .get("code")
+                    .and_then(|cc: &Value| cc.get("coding"))
+                    .and_then(|cod| {
+                        cod.as_array()?.iter().find_map(|c| {
+                            let sys = str_at(c, "system").unwrap_or_default();
+                            if sys.contains("icd-10") || sys.contains("icd10") {
+                                str_at(c, "code").map(str::to_string)
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .filter(|c| code.as_deref() != Some(c.as_str()));
                 let onset = str_at(r, "onsetDateTime").and_then(fhir_date);
                 // A delivery/birth is a real-world event, not a chronic condition.
                 if is_birth_event(&name, code.as_deref()) {
@@ -182,22 +201,24 @@ pub async fn import_fhir(
                     .bind(subject_id).bind(codev).bind(&cs).fetch_optional(pool).await?;
                     if let Some(id) = existing {
                         sqlx::query(
-                            "update conditions set name=$2, status=$3,
-                               onset_date=coalesce($4, onset_date), updated_at=now() where id=$1",
+                        "update conditions set name=$2, status=$3,
+                           onset_date=coalesce($4, onset_date),
+                           icd10_code=coalesce($5, icd10_code), updated_at=now() where id=$1",
                         )
-                        .bind(id).bind(&name).bind(status).bind(onset).execute(pool).await?;
+                        .bind(id).bind(&name).bind(status).bind(onset).bind(&icd10).execute(pool).await?;
                         c.conditions += 1;
                         continue;
                     }
                 }
                 sqlx::query(&format!(
-                    "insert into conditions (id, subject_id, name, code, code_system, status, onset_date, source_id, external_id)
-                     values ($1,$2,$3,$4,$5,$6,$7,$8,$9){ON_CONFLICT}
+                    "insert into conditions (id, subject_id, name, code, code_system, icd10_code, status, onset_date, source_id, external_id)
+                     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10){ON_CONFLICT}
                         name=excluded.name, code=excluded.code, code_system=excluded.code_system,
-                        status=excluded.status, onset_date=excluded.onset_date, updated_at=now()"
+                        icd10_code=excluded.icd10_code, status=excluded.status,
+                        onset_date=excluded.onset_date, updated_at=now()"
                 ))
                 .bind(Uuid::now_v7()).bind(subject_id).bind(&name).bind(&code)
-                .bind(&cs).bind(status).bind(onset)
+                .bind(&cs).bind(&icd10).bind(status).bind(onset)
                 .bind(source_id).bind(&ext_id)
                 .execute(pool).await?;
                 c.conditions += 1;
@@ -425,6 +446,7 @@ enum CItem {
         name: String,
         code: Option<String>,
         code_system: Option<String>,
+        icd10: Option<String>,
         status: Option<String>,
         onset: Option<Date>,
         resolved: Option<Date>,
@@ -900,6 +922,24 @@ fn parse_ccda(xml: &str) -> (Vec<(String, CItem)>, ParseStats) {
                     let code = value.and_then(|v| v.attribute("code")).map(str::to_string);
                     let code_system =
                         value.and_then(|v| norm_system(v.attribute("codeSystemName")));
+                    // Keep the ICD-10 translation when the problem carries one
+                    // under its primary code (Epic ships SNOMED as the value
+                    // code and ICD-10-CM as a <translation>).
+                    // A value can carry several translations; find the ICD-10 one
+                    // regardless of its position (a non-ICD translation first
+                    // must not shadow a later ICD-10).
+                    let icd10 = value.and_then(|v| {
+                        v.children()
+                            .filter(|c| c.tag_name().name() == "translation")
+                            .find_map(|t| {
+                                (norm_system(t.attribute("codeSystemName")).as_deref()
+                                    == Some("ICD-10"))
+                                    .then(|| t.attribute("code"))
+                                    .flatten()
+                                    .filter(|c| !c.is_empty())
+                                    .map(str::to_string)
+                            })
+                    });
                     // Epic files the delivery itself in the problem list — a
                     // delivery/birth is a real-world event, not a chronic
                     // condition, so route it to an incident.
@@ -910,6 +950,7 @@ fn parse_ccda(xml: &str) -> (Vec<(String, CItem)>, ParseStats) {
                             name,
                             code,
                             code_system,
+                            icd10,
                             status: condition_status(obs),
                             onset,
                             resolved: None,
@@ -1098,7 +1139,7 @@ async fn upsert_item(
             .bind(&dose).bind(&route).bind(&status).bind(started)
             .bind(source_id).bind(ext_id).execute(&mut *conn).await?;
         }
-        CItem::Condition { name, code, code_system, status, onset, resolved } => {
+        CItem::Condition { name, code, code_system, icd10, status, onset, resolved } => {
             // conditions.status is NOT NULL (default 'active'); Epic omits the
             // status observation on some problems, so fall back rather than NULL.
             let status = status.unwrap_or_else(|| "active".to_string());
@@ -1117,22 +1158,26 @@ async fn upsert_item(
                     sqlx::query(
                         "update conditions set name=$2, status=$3,
                            onset_date=coalesce($4, onset_date),
-                           resolved_date=coalesce($5, resolved_date), updated_at=now() where id=$1",
+
+                           resolved_date=coalesce($5, resolved_date),
+                           icd10_code=coalesce($6, icd10_code), updated_at=now() where id=$1",
                     )
-                    .bind(id).bind(&name).bind(&status).bind(onset).bind(resolved)
+                    .bind(id).bind(&name).bind(&status).bind(onset).bind(resolved).bind(&icd10)
                     .execute(&mut *conn).await?;
                     return Ok(());
                 }
             }
             sqlx::query(&format!(
-                "insert into conditions (id, subject_id, name, code, code_system, status, onset_date, resolved_date, source_id, external_id)
-                 values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10){ON_CONFLICT}
+
+                "insert into conditions (id, subject_id, name, code, code_system, icd10_code, status, onset_date, resolved_date, source_id, external_id)
+                 values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11){ON_CONFLICT}
                     name=excluded.name, code=excluded.code, code_system=excluded.code_system,
-                    status=excluded.status, onset_date=excluded.onset_date,
+                    icd10_code=excluded.icd10_code, status=excluded.status,
+                    onset_date=excluded.onset_date,
                     resolved_date=excluded.resolved_date, updated_at=now()"
             ))
             .bind(Uuid::now_v7()).bind(subject_id).bind(&name).bind(&code).bind(&code_system)
-            .bind(&status).bind(onset).bind(resolved).bind(source_id).bind(ext_id).execute(&mut *conn).await?;
+            .bind(&icd10).bind(&status).bind(onset).bind(resolved).bind(source_id).bind(ext_id).execute(&mut *conn).await?;
         }
         CItem::Incident { title, occurred } => {
             // Incidents carry no provenance (source_id/external_id) by schema
@@ -1703,6 +1748,7 @@ fn map_problems(tables: &Path, out: &mut Vec<(String, CItem)>) {
                 name,
                 code: None,
                 code_system: None,
+                icd10: None,
                 status: t.get(row, "PROBLEM_STATUS_C_NAME").map(|s| s.to_lowercase()),
                 onset,
                 resolved: t.get(row, "RESOLVED_DATE").and_then(ehi_date),
@@ -2022,4 +2068,73 @@ pub async fn ensure_source(pool: &PgPool, name: &str) -> Result<Uuid, sqlx::Erro
         .execute(pool)
         .await?;
     Ok(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CCDA_PROBLEM_PLAIN: &str = r#"<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <component><structuredBody><component><section>
+    <code code="11450-4"/>
+    <entry>
+      <observation>
+        <templateId root="2.16.840.1.113883.10.20.22.4.4"/>
+        <id root="1.2.840.114350.1.13.297" extension="prob-gdm"/>
+        <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+        <value code="11687002" codeSystemName="SNOMED CT"
+               displayName="Diet controlled gestational diabetes mellitus"/>
+        <effectiveTime><low value="20250604"/></effectiveTime>
+      </observation>
+    </entry>
+  </section></component></structuredBody></component>
+</ClinicalDocument>"#;
+
+    const CCDA_PROBLEM_TRANSLATION: &str = r#"<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <component><structuredBody><component><section>
+    <code code="11450-4"/>
+    <entry>
+      <observation>
+        <templateId root="2.16.840.1.113883.10.20.22.4.4"/>
+        <id root="1.2.840.114350.1.13.297" extension="prob-gdm"/>
+        <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+        <value code="11687002" codeSystemName="SNOMED CT"
+               displayName="Diet controlled gestational diabetes mellitus">
+          <translation code="O24.419" codeSystemName="ICD-10-CM"
+                       displayName="Gestational diabetes mellitus in pregnancy"/>
+        </value>
+        <effectiveTime><low value="20250604"/></effectiveTime>
+      </observation>
+    </entry>
+  </section></component></structuredBody></component>
+</ClinicalDocument>"#;
+
+    fn gdm(ccda: &str) -> (Option<String>, Option<String>) {
+        let (items, stats) = parse_ccda(ccda);
+        assert!(!stats.parse_failed, "parse_ccda must not fail");
+        items
+            .iter()
+            .find_map(|(_, it)| match it {
+                CItem::Condition { code, code_system, icd10, .. }
+                    if code.as_deref() == Some("11687002") =>
+                {
+                    Some((code_system.clone(), icd10.clone()))
+                }
+                _ => None,
+            })
+            .expect("GDM condition with SNOMED value code")
+    }
+
+    #[test]
+    fn ccda_problem_keeps_icd10_translation() {
+        // No translation → icd10 stays None even though the value is coded.
+        let (cs, icd10) = gdm(CCDA_PROBLEM_PLAIN);
+        assert_eq!(cs.as_deref(), Some("SNOMED"));
+        assert_eq!(icd10.as_deref(), None, "no translation in the document");
+
+        // With an ICD-10-CM translation under the value → captured.
+        let (cs, icd10) = gdm(CCDA_PROBLEM_TRANSLATION);
+        assert_eq!(cs.as_deref(), Some("SNOMED"), "SNOMED stays the primary code");
+        assert_eq!(icd10.as_deref(), Some("O24.419"));
+    }
 }
