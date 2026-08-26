@@ -234,7 +234,7 @@ pub async fn vitals_labs(
         .await?;
     let rows = sqlx::query_as::<_, crate::models::ObservationRow>(
         "select effective_on, category, display, value_num::float8 as value_num, value_text, unit,
-                ref_low::float8 as ref_low, ref_high::float8 as ref_high, abnormal_flag
+                ref_low::float8 as ref_low, ref_high::float8 as ref_high, abnormal_flag, panel_id
            from observations where subject_id = $1
           order by effective_on desc, panel_id nulls first, display",
     )

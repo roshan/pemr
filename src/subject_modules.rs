@@ -66,6 +66,16 @@ fn fmt_num(n: f64) -> String {
     if n.fract() == 0.0 { format!("{}", n as i64) } else { format!("{n:.1}") }
 }
 
+/// Human reference range from the low/high bounds (PEMR-32).
+fn reference(lo: Option<f64>, hi: Option<f64>) -> String {
+    match (lo, hi) {
+        (Some(l), Some(h)) => format!("{}–{}", fmt_num(l), fmt_num(h)),
+        (None, Some(h)) => format!("≤ {}", fmt_num(h)),
+        (Some(l), None) => format!("≥ {}", fmt_num(l)),
+        (None, None) => String::new(),
+    }
+}
+
 /// Card wrapper: bordered panel, optionally with a "View all →" link.
 fn card<T: Render>(title: T, href: Option<String>, body: Markup) -> Markup {
     match href {
@@ -332,25 +342,40 @@ fn allergies<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
         } else {
             "No allergies recorded"
         };
-        // Print includes the reaction detail; the card keeps it terse.
-        let item = |a: &Allergy, with_reaction: bool| c::panel_list_item(
+        // Reaction (+ its code) rides on the card too (PEMR-32): the reaction
+        // is the actionable bit — criticality alone doesn't say what happens.
+        let item = |a: &Allergy| c::panel_list_item_truncated(
             html! { (a.substance) },
             html! {
                 @if let Some(crit) = &a.criticality { (crit) }
                 @else if let Some(sev) = &a.severity { (sev) }
-                @if with_reaction { @if let Some(r) = &a.reaction { " — " (r) } }
+                @if let Some(r) = &a.reaction { " — " (r) }
+                @if let (Some(rc), Some(rcs)) = (&a.reaction_code, &a.reaction_code_system) {
+                    " · " (rcs) " " (rc)
+                }
             },
         );
         Ok(Some(match mode {
             Mode::Card => card("Allergies", None, if rows.is_empty() {
                 c::empty_state(empty)
             } else {
-                truncated_list(rows.iter().map(|a| item(a, false)), rows.len(), None)
+                truncated_list(rows.iter().map(item), rows.len(), None)
             }),
             Mode::Print => print_section("Allergies", if rows.is_empty() {
                 c::empty_state(empty)
             } else {
-                full_list(rows.iter().map(|a| item(a, true)))
+                // Print flips the truncation: full-width primary, reaction right.
+                full_list(rows.iter().map(|a| c::panel_list_item(
+                    html! { (a.substance) },
+                    html! {
+                        @if let Some(crit) = &a.criticality { (crit) }
+                        @else if let Some(sev) = &a.severity { (sev) }
+                        @if let Some(r) = &a.reaction { " — " (r) }
+                        @if let (Some(rc), Some(rcs)) = (&a.reaction_code, &a.reaction_code_system) {
+                            " · " (rcs) " " (rc)
+                        }
+                    },
+                )))
             }),
         }))
     })
@@ -470,7 +495,8 @@ fn immunizations<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a>
 fn vitals<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
     Box::pin(async move {
         let rows = sqlx::query_as::<_, VitalRow>(
-            "select display, value_num::float8 as value_num, value_text, unit, effective_on, abnormal_flag
+            "select display, value_num::float8 as value_num, value_text, unit, effective_on,
+                abnormal_flag, ref_low::float8 as ref_low, ref_high::float8 as ref_high
                from observations where subject_id = $1
               order by effective_on desc, created_at desc limit 8",
         )
@@ -499,7 +525,12 @@ fn vitals<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
                             span class="truncate" { (v.display) }
                             @if let Some(f) = &v.abnormal_flag { @if f != "normal" { " " (c::badge_warn(f)) } }
                         },
-                        html! { (val(v)) @if let Some(u) = &v.unit { " " (u) } " · " (v.effective_on) },
+                        html! {
+                            (val(v)) @if let Some(u) = &v.unit { " " (u) }
+                            @let rng = reference(v.ref_low, v.ref_high);
+                            @if !rng.is_empty() { " (" (rng) ")" }
+                            " · " (v.effective_on)
+                        },
                     )), total as usize, Some(href))
                 })
             }
@@ -508,7 +539,12 @@ fn vitals<'a>(pool: &'a PgPool, s: &'a Subject, mode: Mode) -> BoxFut<'a> {
             } else {
                 full_list(rows.iter().map(|v| c::panel_list_item(
                     html! { (v.display) },
-                    html! { (val(v)) @if let Some(u) = &v.unit { " " (u) } " · " (v.effective_on) },
+                    html! {
+                        (val(v)) @if let Some(u) = &v.unit { " " (u) }
+                        @let rng = reference(v.ref_low, v.ref_high);
+                        @if !rng.is_empty() { " (" (rng) ")" }
+                        " · " (v.effective_on)
+                    },
                 )))
             }),
         }))

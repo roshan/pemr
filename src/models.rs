@@ -165,6 +165,8 @@ pub struct VitalRow {
     pub unit: Option<String>,
     pub effective_on: Date,
     pub abnormal_flag: Option<String>,
+    pub ref_low: Option<f64>,
+    pub ref_high: Option<f64>,
 }
 
 /// A full observation row for the vitals & labs list. `value_num`/`ref_low`/
@@ -180,6 +182,10 @@ pub struct ObservationRow {
     pub ref_low: Option<f64>,
     pub ref_high: Option<f64>,
     pub abnormal_flag: Option<String>,
+    /// The lab battery this analyte belongs to (`observations.panel_id`, from
+    /// a C-CDA result <organizer>). Null for singletons; used to group a CBC
+    /// rather than flattens its members.
+    pub panel_id: Option<Uuid>,
 }
 
 /// A care-team member joined for the subject chart (subject_providers → providers).
