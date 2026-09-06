@@ -29,6 +29,18 @@ pub const DOMAINS: &[(&str, &str)] = &[
     ("movement", "Movement/Physical Development"),
 ];
 
+/// Compact domain label for dense layouts (the band view's row gutter), keyed
+/// by the same `DOMAINS` key. Unknown keys fall through to a generic label.
+pub fn domain_short(domain: &str) -> &'static str {
+    match domain {
+        "social_emotional" => "Social",
+        "language" => "Language",
+        "cognitive" => "Cognitive",
+        "movement" => "Movement",
+        _ => "Other",
+    }
+}
+
 /// One vendored milestone. All fields borrow from the embedded `'static` TSV.
 #[derive(Debug, Clone, Copy)]
 pub struct Milestone {
@@ -173,6 +185,14 @@ mod tests {
             let groups = by_checkpoint_grouped(mo);
             assert_eq!(groups.len(), 4, "checkpoint {mo} should have 4 domains");
         }
+    }
+
+    #[test]
+    fn every_domain_has_a_short_label() {
+        for (k, _) in DOMAINS {
+            assert_ne!(domain_short(k), "Other", "no short label for {k}");
+        }
+        assert_eq!(domain_short("nope"), "Other");
     }
 
     #[test]

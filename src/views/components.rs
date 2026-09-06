@@ -320,6 +320,98 @@ pub fn milestone_observed_input(value: &str, url: &str) -> Markup {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Milestone band view (age band × domain overview)
+// ---------------------------------------------------------------------------
+//
+// A dense, banded overview of the whole 2mo–5y milestone map: 12 checkpoint
+// columns (the CDC age bands) × 4 domain rows, each cell holding one tick per
+// milestone coloured by its response. Every cell (and column header) is an
+// hx-get to that checkpoint's checklist, so the band doubles as the checkpoint
+// picker. Equal columns come from `flex-1`, so no arbitrary-value classes are
+// needed (see the Tailwind scanner gotcha in CLAUDE.md).
+
+/// One milestone tick in the band view. `state` is the stored response
+/// (`yes` / `not_yet` / `no`) or `None` for an unanswered milestone.
+pub fn milestone_band_tick(state: Option<&str>) -> Markup {
+    let color = match state {
+        Some("yes") => "bg-emerald-500",
+        Some("not_yet") => "bg-amber-400",
+        Some("no") => "bg-rose-400",
+        _ => "bg-slate-200",
+    };
+    html! { span class={"h-2 w-2 rounded-xs " (color)} {} }
+}
+
+/// The band view's row gutter label (a domain's short name).
+pub fn milestone_band_row_label(text: impl Render) -> Markup {
+    html! { div class="w-20 shrink-0 text-xs text-muted truncate" { (text) } }
+}
+
+/// A band-view column header: the age band's compact label, hx-getting that
+/// checkpoint's checklist. `viewing` is the checkpoint currently shown below;
+/// `current_age` marks the child's own band with a dot.
+pub fn milestone_band_header(
+    label: impl Render,
+    url: &str,
+    target: &str,
+    viewing: bool,
+    current_age: bool,
+) -> Markup {
+    let variant = if viewing {
+        "bg-brand text-white"
+    } else {
+        "text-muted hover:bg-slate-100"
+    };
+    html! {
+        button type="button" hx-get=(url) hx-target=(target) hx-swap="outerHTML"
+            class={"flex-1 min-w-4 rounded-t px-1 py-1 text-xs font-medium transition-colors " (variant)} {
+            span class="block truncate" { (label) }
+            @if current_age { span class="block text-xs leading-none" { "\u{2022}" } }
+        }
+    }
+}
+
+/// One band-view cell: the ticks for a (checkpoint, domain) pair, clickable to
+/// jump the checklist to that checkpoint. `title` is the native hover tooltip
+/// (e.g. "Language · 12 months · 2/4 met").
+pub fn milestone_band_cell(
+    url: &str,
+    target: &str,
+    title: &str,
+    viewing: bool,
+    ticks: Markup,
+) -> Markup {
+    let variant = if viewing { "bg-indigo-50" } else { "hover:bg-slate-50" };
+    html! {
+        button type="button" hx-get=(url) hx-target=(target) hx-swap="outerHTML"
+            title=(title)
+            class={"flex-1 min-w-4 flex flex-wrap content-start gap-0.5 rounded p-1 transition-colors " (variant)} {
+            (ticks)
+        }
+    }
+}
+
+/// The band view's colour key.
+pub fn milestone_band_legend() -> Markup {
+    let item = |state: Option<&str>, label: &str| {
+        html! {
+            span class="inline-flex items-center gap-1" {
+                (milestone_band_tick(state))
+                span class="text-xs text-muted" { (label) }
+            }
+        }
+    };
+    html! {
+        div class="flex flex-wrap items-center gap-3" {
+            (item(Some("yes"), "Yes"))
+            (item(Some("not_yet"), "Not yet"))
+            (item(Some("no"), "No"))
+            (item(None, "Not marked"))
+        }
+    }
+}
+
 /// A button that hx-POSTs `url` and swaps the response into `target`
 /// (outerHTML) — for the feature registry's add / remove controls (no page
 /// reload; the surface "pops in"). `danger` picks the destructive look.

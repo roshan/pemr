@@ -46,6 +46,7 @@ pub fn checklist(
 
     html! {
         div id="milestone-checklist" {
+            (band_view(subject_id, checkpoint, computed, &map))
             div class="flex items-center justify-between gap-2 mb-3" {
                 (c::hx_nav_button(
                     "← Younger",
@@ -82,6 +83,77 @@ pub fn checklist(
                     }
                 }
             }
+        }
+    }
+}
+
+/// The **band view**: the whole 2mo–5y milestone map as 12 CDC age-band
+/// columns × 4 domain rows, one tick per milestone coloured by its response.
+/// It renders INSIDE `#milestone-checklist` (not above it) so every mark, date
+/// edit, and stepper swap re-renders the band in the same response — one
+/// endpoint, never a stale overview. Each cell/header hx-gets that checkpoint's
+/// checklist, so the band is also the checkpoint picker. `viewing` is the
+/// checkpoint shown below; `computed` is the child's own band.
+fn band_view(
+    subject_id: Uuid,
+    viewing: i32,
+    computed: Option<i32>,
+    map: &HashMap<&str, &MilestoneResponse>,
+) -> Markup {
+    let target = "#milestone-checklist";
+    html! {
+        div class="mb-4" {
+            (c::summary_panel(
+                html! { "Milestones by age band" },
+                html! {
+                    div class="flex items-stretch gap-1" {
+                        div class="w-20 shrink-0" {}
+                        @for &cp in milestones::CHECKPOINTS {
+                            (c::milestone_band_header(
+                                milestone_age::fmt_months_short(cp),
+                                &checklist_url(subject_id, cp),
+                                target,
+                                cp == viewing,
+                                computed == Some(cp),
+                            ))
+                        }
+                    }
+                    @for (dkey, dlabel) in milestones::DOMAINS {
+                        div class="flex items-stretch gap-1" {
+                            (c::milestone_band_row_label(milestones::domain_short(dkey)))
+                            @for &cp in milestones::CHECKPOINTS {
+                                @let items: Vec<Milestone> = milestones::by_checkpoint(cp)
+                                    .into_iter()
+                                    .filter(|m| m.domain == *dkey)
+                                    .collect();
+                                @let met = items
+                                    .iter()
+                                    .filter(|m| map.get(m.key).map(|r| r.response.as_str()) == Some("yes"))
+                                    .count();
+                                (c::milestone_band_cell(
+                                    &checklist_url(subject_id, cp),
+                                    target,
+                                    &format!(
+                                        "{dlabel} \u{00b7} {} \u{00b7} {met}/{} marked yes",
+                                        milestone_age::fmt_months(cp),
+                                        items.len(),
+                                    ),
+                                    cp == viewing,
+                                    html! {
+                                        @for m in &items {
+                                            (c::milestone_band_tick(map.get(m.key).map(|r| r.response.as_str())))
+                                        }
+                                    },
+                                ))
+                            }
+                        }
+                    }
+                    div class="mt-2 flex flex-wrap items-center justify-between gap-2" {
+                        (c::milestone_band_legend())
+                        (c::muted("Each square is one CDC milestone \u{2014} pick a band to open its checklist."))
+                    }
+                },
+            ))
         }
     }
 }

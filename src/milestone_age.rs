@@ -191,6 +191,18 @@ pub fn fmt_months(months: i32) -> String {
     }
 }
 
+/// Compact age label for dense layouts (the band view's column headers), where
+/// `fmt_months` prose ("2 years 6 months") is far too wide: months up to 2
+/// years, then years (`2y`, `2y6m`, `5y`).
+pub fn fmt_months_short(months: i32) -> String {
+    let m = months.max(0);
+    if m < 24 {
+        return format!("{m}m");
+    }
+    let (y, r) = (m / 12, m % 12);
+    if r == 0 { format!("{y}y") } else { format!("{y}y{r}m") }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,5 +337,14 @@ mod tests {
         assert_eq!(fmt_months(12), "1 year");
         assert_eq!(fmt_months(25), "2 years 1 month");
         assert_eq!(fmt_months(36), "3 years");
+    }
+
+    #[test]
+    fn fmt_months_short_stays_narrow() {
+        assert_eq!(fmt_months_short(2), "2m");
+        assert_eq!(fmt_months_short(18), "18m");
+        assert_eq!(fmt_months_short(24), "2y");
+        assert_eq!(fmt_months_short(30), "2y6m");
+        assert_eq!(fmt_months_short(60), "5y");
     }
 }
