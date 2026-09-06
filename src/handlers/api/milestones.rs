@@ -5,7 +5,7 @@
 //! subject's **tracker + responses**, and **mark** (one milestone). Every one
 //! delegates to the same code the UI uses (`handlers::milestones`) — there is
 //! exactly one implementation of the age basis, the observed-on default and the
-//! upsert, and this module must never grow a second.
+//! upsert, and this module must never acquire a second.
 //!
 //! Two rules this surface exists to enforce:
 //!
