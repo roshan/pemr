@@ -193,10 +193,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             post(handlers::milestones::mark),
         )
         .route(
-            "/subjects/{id}/milestones/observed/{key}",
-            post(handlers::milestones::set_observed),
-        )
-        .route(
             "/subjects/{id}/milestones/progress",
             get(handlers::milestones::progress),
         )

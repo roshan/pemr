@@ -88,7 +88,9 @@ pub fn checklist(
 
 /// One milestone's response controls: three buttons (the answer is encoded in
 /// each button's POST URL — see `components::milestone_mark_button`), plus (once
-/// "yes") an observed-on date that saves on change. No `<form>` — htmx's
+/// "yes") an observed-on date that saves on change. Both post to the SAME
+/// `…/mark/{key}/{response}` endpoint — the date input just adds its own
+/// `observed_on` value to the "yes" URL. No `<form>` — htmx's
 /// `new FormData(form)` drops submit-button values, so a shared form would never
 /// send the response.
 fn row_controls(
@@ -101,8 +103,6 @@ fn row_controls(
     let mark = |r: &str| {
         format!("/subjects/{subject_id}/milestones/mark/{}/{r}?checkpoint={checkpoint}", m.key)
     };
-    let observed_url =
-        format!("/subjects/{subject_id}/milestones/observed/{}?checkpoint={checkpoint}", m.key);
     html! {
         div class="flex items-start justify-between gap-3" {
             span class="text-sm text-ink" { (m.text) }
@@ -117,7 +117,7 @@ fn row_controls(
                 span class="text-xs text-muted" { "First observed" }
                 (c::milestone_observed_input(
                     &resp.and_then(|r| r.observed_on).map(|d| d.to_string()).unwrap_or_default(),
-                    &observed_url,
+                    &mark("yes"),
                 ))
             }
         }

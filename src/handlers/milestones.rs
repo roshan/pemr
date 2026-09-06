@@ -237,15 +237,33 @@ async fn upsert_response(
     Ok(())
 }
 
-/// `POST /subjects/{id}/milestones/mark/{key}/{response}?checkpoint=N` — record a
-/// yes/not-yet/no answer (the answer is in the URL, so htmx's `new FormData(form)`
-/// submit-button omission can't bite), then swap the checklist back in. For "yes"
-/// the observed date is preserved if already set, else defaults to today; cleared
-/// for not-yet / no.
+#[derive(Debug, Deserialize)]
+pub struct MarkForm {
+    /// Optional observed-on date, sent by the date input's own `name=value`
+    /// (htmx includes the triggering element's value). Blank/absent from the
+    /// yes/not-yet/no buttons, which carry no body params.
+    #[serde(default)]
+    pub observed_on: String,
+}
+
+/// `POST /subjects/{id}/milestones/mark/{key}/{response}?checkpoint=N` — the ONE
+/// write endpoint for a milestone answer, then swap the checklist back in.
+///
+/// The response is in the URL (htmx's `new FormData(form)` drops submit-button
+/// values, so it can't ride in the body); the observed-on date is an optional
+/// `observed_on` body field, because the date input posts its own `name=value`.
+/// Both controls therefore target this route:
+///
+/// * the yes/not-yet/no buttons post no body params → for "yes" the existing
+///   observed date is preserved, else it defaults to `default_observed_date`;
+///   not-yet / no clear it.
+/// * the date input posts `…/mark/{key}/yes` with `observed_on=<date>` → sets
+///   that date (a blank value falls back to the same default).
 pub async fn mark(
     State(state): State<AppState>,
     Path((id, key, response)): Path<(Uuid, String, String)>,
     Query(q): Query<ChecklistQuery>,
+    Form(f): Form<MarkForm>,
 ) -> AppResult<Markup> {
     if !milestones::RESPONSES.contains(&response.as_str()) {
         return Err(AppError::BadRequest(format!("invalid response: {response}")));
@@ -255,17 +273,15 @@ pub async fn mark(
     let s = load_subject(&state.pool, id).await?;
 
     let observed_on = if response == "yes" {
-        // Preserve an existing observed date; otherwise default to the latest date
-        // in this milestone's age period (today for the current period).
-        let existing: Option<time::Date> = sqlx::query_scalar(
-            "select observed_on from milestone_responses where subject_id = $1 and milestone_key = $2",
-        )
-        .bind(id)
-        .bind(&key)
-        .fetch_optional(&state.pool)
-        .await?
-        .flatten();
-        Some(existing.unwrap_or_else(|| default_observed_date(&s, m.checkpoint_months)))
+        let supplied = parse_date(&f.observed_on).map_err(AppError::BadRequest)?;
+        Some(match supplied {
+            Some(d) => d,
+            // No date in the body: keep the one already recorded, else default to
+            // the latest date in this milestone's age period.
+            None => existing_observed(&state.pool, id, &key)
+                .await?
+                .unwrap_or_else(|| default_observed_date(&s, m.checkpoint_months)),
+        })
     } else {
         None
     };
@@ -277,33 +293,20 @@ pub async fn mark(
     Ok(views::milestones::checklist(id, checkpoint, computed, &responses))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ObservedForm {
-    #[serde(default)]
-    pub observed_on: String,
-}
-
-/// `POST /subjects/{id}/milestones/observed/{key}?checkpoint=N` — set/edit the
-/// observed-on date for a milestone (implies "yes"). Fired by the date input's
-/// change, which sends its own `observed_on` value. Blank → today.
-pub async fn set_observed(
-    State(state): State<AppState>,
-    Path((id, key)): Path<(Uuid, String)>,
-    Query(q): Query<ChecklistQuery>,
-    Form(f): Form<ObservedForm>,
-) -> AppResult<Markup> {
-    let m = milestones::by_key(&key)
-        .ok_or_else(|| AppError::BadRequest(format!("unknown milestone: {key}")))?;
-    let s = load_subject(&state.pool, id).await?;
-    let observed_on = parse_date(&f.observed_on)
-        .map_err(AppError::BadRequest)?
-        .unwrap_or_else(|| default_observed_date(&s, m.checkpoint_months));
-
-    upsert_response(&state.pool, &s, m, "yes", Some(observed_on)).await?;
-
-    let (checkpoint, computed) = resolve_checkpoint(&s, q.checkpoint)?;
-    let responses = load_responses(&state.pool, id).await?;
-    Ok(views::milestones::checklist(id, checkpoint, computed, &responses))
+/// The observed-on date already recorded for a milestone, if any.
+async fn existing_observed(
+    pool: &sqlx::PgPool,
+    id: Uuid,
+    key: &str,
+) -> Result<Option<time::Date>, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, Option<time::Date>>(
+        "select observed_on from milestone_responses where subject_id = $1 and milestone_key = $2",
+    )
+    .bind(id)
+    .bind(key)
+    .fetch_optional(pool)
+    .await?
+    .flatten())
 }
 
 /// `GET /subjects/{id}/milestones/progress` — the dated-progress view (PEMR-44).

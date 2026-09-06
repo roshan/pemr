@@ -310,6 +310,8 @@ pub fn milestone_mark_button(label: impl Render, url: &str, active: bool) -> Mar
 /// The observed-on date editor shown on a milestone marked "yes". It carries its
 /// OWN value (htmx includes a triggering input's `name=value`), so changing the
 /// date posts `observed_on` and saves immediately — no separate submit button.
+/// `url` is the milestone's `…/mark/{key}/yes` route: same endpoint as the mark
+/// buttons, the date just rides along in the body.
 pub fn milestone_observed_input(value: &str, url: &str) -> Markup {
     html! {
         input type="date" name="observed_on" value=(value)
