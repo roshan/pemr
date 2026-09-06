@@ -107,6 +107,18 @@ pub fn provenance_conflict(has_keys: bool, set_cols: &str) -> String {
 /// the read-path default (which collapses everything non-RowNotFound into 500).
 /// FK violations → 400, unique violations → 409, other constraint/format
 /// violations → 400; anything else is a genuine 500.
+/// `#[serde(deserialize_with = "double_option")]` on an `Option<Option<T>>`
+/// field: `None` = the key was absent, `Some(None)` = the key was sent as
+/// `null`. Plain `Option<T>` collapses the two, which is exactly the
+/// distinction a partial-update field needs (leave alone vs. clear).
+pub fn double_option<'de, T, D>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(de).map(Some)
+}
+
 pub fn write_err(e: sqlx::Error) -> ApiError {
     if let sqlx::Error::Database(db) = &e {
         match db.code().as_deref() {

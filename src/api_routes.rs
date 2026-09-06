@@ -377,7 +377,8 @@ pub fn routes() -> Vec<ApiRoute> {
             route: || post(api::milestones::mark),
             docs: &[(
                 "POST",
-                "mark one milestone (req: response=yes|not_yet|no; opt: observed_on). Upsert on \
+                "mark one milestone (req: response=yes|not_yet|no; opt: observed_on, note — \
+                 omit note to keep a stored one, send null/\"\" to clear). Upsert on \
                  (subject_id, milestone_key). 400 = key not in the CDC catalogue; 409 = the \
                  milestones feature is not enabled for that subject (enable it in the UI first)",
             )],

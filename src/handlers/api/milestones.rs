@@ -156,6 +156,13 @@ pub struct MarkBody {
     /// period (`milestone_age::latest_date_in_period`), exactly as the UI does.
     #[serde(default)]
     pub observed_on: Option<String>,
+    /// Free text the caller wants to keep with the answer — typically the
+    /// precision or provenance of a remembered date ("month precision; family
+    /// recollection"), which the date column alone can't express (PEMR-59).
+    /// Omit the key to leave a stored note untouched; send `null` or `""` to
+    /// clear it. The UI never writes this column.
+    #[serde(default, deserialize_with = "crate::handlers::api::double_option")]
+    pub note: Option<Option<String>>,
 }
 
 /// `POST /api/v1/subjects/{id}/milestones/{key}` — mark one milestone. The same
@@ -211,8 +218,17 @@ pub async fn mark(
         None
     };
 
+    // Distinguish "no note key in the body" (leave the column alone) from an
+    // explicit null/empty (clear it) — see MarkBody::note.
+    let note = match body.note.as_ref() {
+        None => crate::handlers::milestones::NoteWrite::Keep,
+        Some(v) => crate::handlers::milestones::NoteWrite::Set(
+            v.as_deref().map(str::trim).filter(|t| !t.is_empty()),
+        ),
+    };
+
     // Shares the UI's upsert: one age-basis snapshot rule, one dedup key.
-    crate::handlers::milestones::upsert_response(&state.pool, &s, m, response, observed_on)
+    crate::handlers::milestones::upsert_response(&state.pool, &s, m, response, observed_on, note)
         .await
         .map_err(|e| match e {
             crate::error::AppError::BadRequest(msg) => ApiError::bad_request(msg),

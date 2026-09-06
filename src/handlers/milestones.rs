@@ -191,15 +191,28 @@ pub async fn checklist(
     Ok(views::milestones::checklist(id, checkpoint, computed, &responses))
 }
 
+/// How a write treats the `note` column. The UI has no note field, so it must
+/// never clobber a note an API caller left (PEMR-59); the API distinguishes
+/// "field omitted" from "field sent empty".
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum NoteWrite<'a> {
+    /// Leave whatever is stored (the UI, and an API body with no `note` key).
+    Keep,
+    /// Set the note; `None` clears it (an API body with `note: null` or `""`).
+    Set(Option<&'a str>),
+}
+
 /// Upsert one milestone response, capturing the point-in-time age snapshot
-/// (basis + chronological age in days) per the queryability spec. `note` is not
-/// touched on update (there's no note UI; the column stays for future/API use).
+/// (basis + chronological age in days) per the queryability spec. `note` is
+/// written per [`NoteWrite`] — `Keep` preserves the stored value, so a UI mark
+/// can't wipe an API caller's provenance note.
 pub(crate) async fn upsert_response(
     pool: &sqlx::PgPool,
     s: &Subject,
     m: milestones::Milestone,
     response: &str,
     observed_on: Option<time::Date>,
+    note: NoteWrite<'_>,
 ) -> AppResult<()> {
     // Marking requires a DOB — the age snapshot is part of the record.
     let dob = s
@@ -209,11 +222,18 @@ pub(crate) async fn upsert_response(
     let tracker = milestone_age::tracker_age(dob, s.gestational_age_weeks, today);
     let chronological_age_days = (today.to_julian_day() - dob.to_julian_day()).max(0);
 
+    // $10 carries the note value, $11 says whether the caller addressed the
+    // column at all — `coalesce` alone couldn't express "clear it".
+    let (note_value, note_given) = match note {
+        NoteWrite::Keep => (None, false),
+        NoteWrite::Set(v) => (v, true),
+    };
+
     sqlx::query(
         "insert into milestone_responses
            (id, subject_id, milestone_key, domain, expected_age_months, response,
-            observed_on, age_basis_used, chronological_age_days, answered_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
+            observed_on, age_basis_used, chronological_age_days, note, answered_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
          on conflict (subject_id, milestone_key) do update set
             response = excluded.response,
             domain = excluded.domain,
@@ -221,6 +241,7 @@ pub(crate) async fn upsert_response(
             observed_on = excluded.observed_on,
             age_basis_used = excluded.age_basis_used,
             chronological_age_days = excluded.chronological_age_days,
+            note = case when $11 then $10 else milestone_responses.note end,
             answered_at = now()",
     )
     .bind(Uuid::now_v7())
@@ -232,6 +253,8 @@ pub(crate) async fn upsert_response(
     .bind(observed_on)
     .bind(tracker.basis.as_str())
     .bind(chronological_age_days)
+    .bind(note_value)
+    .bind(note_given)
     .execute(pool)
     .await?;
     Ok(())
@@ -286,7 +309,8 @@ pub async fn mark(
         None
     };
 
-    upsert_response(&state.pool, &s, m, &response, observed_on).await?;
+    // The UI has no note field: never touch the column (PEMR-59).
+    upsert_response(&state.pool, &s, m, &response, observed_on, NoteWrite::Keep).await?;
 
     let (checkpoint, computed) = resolve_checkpoint(&s, q.checkpoint)?;
     let responses = load_responses(&state.pool, id).await?;
