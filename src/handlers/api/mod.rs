@@ -28,6 +28,7 @@ pub mod insurance_cards;
 pub mod insurance_plans;
 pub mod me;
 pub mod medications;
+pub mod milestones;
 pub mod observations;
 pub mod providers;
 pub mod records;

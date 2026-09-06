@@ -18,14 +18,14 @@ use crate::viewer::ViewerContext;
 use crate::views::layout::Nav;
 use crate::{feature_registry, milestone_age, milestones, peds, views};
 
-async fn load_subject(pool: &sqlx::PgPool, id: Uuid) -> Result<Subject, sqlx::Error> {
+pub(crate) async fn load_subject(pool: &sqlx::PgPool, id: Uuid) -> Result<Subject, sqlx::Error> {
     sqlx::query_as::<_, Subject>("select * from subjects where id = $1")
         .bind(id)
         .fetch_one(pool)
         .await
 }
 
-async fn load_responses(
+pub(crate) async fn load_responses(
     pool: &sqlx::PgPool,
     id: Uuid,
 ) -> Result<Vec<MilestoneResponse>, sqlx::Error> {
@@ -38,7 +38,7 @@ async fn load_responses(
 }
 
 /// The subject's current tracker age (basis + checkpoint), if they have a DOB.
-fn tracker_for(s: &Subject) -> Option<milestone_age::TrackerAge> {
+pub(crate) fn tracker_for(s: &Subject) -> Option<milestone_age::TrackerAge> {
     s.dob
         .map(|dob| milestone_age::tracker_age(dob, s.gestational_age_weeks, peds::today()))
 }
@@ -46,7 +46,7 @@ fn tracker_for(s: &Subject) -> Option<milestone_age::TrackerAge> {
 /// Default observed-on date for marking a milestone "yes": the latest date the
 /// child was within that milestone's age `period` (today for the current period).
 /// Falls back to today with no DOB (the upsert rejects a DOB-less mark anyway).
-fn default_observed_date(s: &Subject, period: i32) -> time::Date {
+pub(crate) fn default_observed_date(s: &Subject, period: i32) -> time::Date {
     let today = peds::today();
     match s.dob {
         Some(dob) => milestone_age::latest_date_in_period(dob, s.gestational_age_weeks, period, today),
@@ -194,7 +194,7 @@ pub async fn checklist(
 /// Upsert one milestone response, capturing the point-in-time age snapshot
 /// (basis + chronological age in days) per the queryability spec. `note` is not
 /// touched on update (there's no note UI; the column stays for future/API use).
-async fn upsert_response(
+pub(crate) async fn upsert_response(
     pool: &sqlx::PgPool,
     s: &Subject,
     m: milestones::Milestone,
@@ -294,7 +294,7 @@ pub async fn mark(
 }
 
 /// The observed-on date already recorded for a milestone, if any.
-async fn existing_observed(
+pub(crate) async fn existing_observed(
     pool: &sqlx::PgPool,
     id: Uuid,
     key: &str,

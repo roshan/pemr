@@ -350,6 +350,38 @@ pub fn routes() -> Vec<ApiRoute> {
                 "import a C-CDA XML document (MyChart 'Download My Record'); body is the raw XML",
             )],
         },
+        ApiRoute {
+            path: "/api/v1/milestones",
+            doc_path: Some("/api/v1/milestones?checkpoint=<months>&domain=<domain>"),
+            route: || get(api::milestones::catalogue),
+            docs: &[(
+                "GET",
+                "the canonical CDC \"Learn the Signs. Act Early.\" 2022 milestone catalogue \
+                 (159 milestones, 12 checkpoints 2mo-5y, 4 domains) + the response vocabulary \
+                 and disclaimer. The ONLY accepted milestone vocabulary — never invent one",
+            )],
+        },
+        ApiRoute {
+            path: "/api/v1/subjects/{id}/milestones",
+            doc_path: None,
+            route: || get(api::milestones::subject_milestones),
+            docs: &[(
+                "GET",
+                "one subject's milestone tracker: computed age + basis (chronological|corrected), \
+                 current checkpoint, feature_enabled, and every recorded response",
+            )],
+        },
+        ApiRoute {
+            path: "/api/v1/subjects/{id}/milestones/{key}",
+            doc_path: None,
+            route: || post(api::milestones::mark),
+            docs: &[(
+                "POST",
+                "mark one milestone (req: response=yes|not_yet|no; opt: observed_on). Upsert on \
+                 (subject_id, milestone_key). 400 = key not in the CDC catalogue; 409 = the \
+                 milestones feature is not enabled for that subject (enable it in the UI first)",
+            )],
+        },
     ]
 }
 

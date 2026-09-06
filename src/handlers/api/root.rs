@@ -58,6 +58,7 @@ pub async fn index(_ctx: ApiKeyContext) -> Json<Value> {
             "insurance_plan_type": models::INSURANCE_PLAN_TYPES,
             "insurance_plan_kind": models::INSURANCE_PLAN_KINDS,
             "insurance_relationship": models::INSURANCE_RELATIONSHIPS,
+            "milestone_response": crate::milestones::RESPONSES,
             "date_precision": models::DATE_PRECISIONS,
             "code_system": models::CODE_SYSTEMS,
         },
