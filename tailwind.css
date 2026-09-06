@@ -1,4 +1,11 @@
-@import "tailwindcss";
+/* `source(none)` disables Tailwind v4's automatic content detection, which
+   otherwise scans the WHOLE repo (CLAUDE.md, READMEs, KB notes...) on top of
+   anything @source names. Prose is indistinguishable from a class list to the
+   scanner, so an English sentence containing "grow", "isolate", "container" or
+   any other utility word silently added that rule to the bundle — producing a
+   CSS diff on commits that touched no markup, which then trips the deploy's
+   dirty-tree guard. With source(none) the ONLY inputs are the globs below. */
+@import "tailwindcss" source(none);
 
 /* Tailwind v4 scans these files for class names and emits only what's used. */
 @source "./src/**/*.rs";
