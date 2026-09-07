@@ -92,7 +92,7 @@ pub fn page(
             }))
 
             (c::alert_info("Forecast uses a simplified routine ACIP-based schedule — recommended ages \
-                only, no catch-up or contraindication logic. Not a substitute for your pediatrician."))
+                only, no catch-up or contraindication logic."))
         }
     };
     shell(nav, body)

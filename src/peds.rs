@@ -1,9 +1,9 @@
 //! Pediatric clinical computation (PEMR-25): immunization forecasting against a
 //! vendored, **simplified routine** childhood schedule (ACIP-based recommended
-//! ages, in months). This is decision *support*, NOT a substitute for the
-//! pediatrician — catch-up rules, contraindications, and brand-specific series
-//! (e.g. RV1 vs RV5) are out of scope. No external/runtime calls: the schedule
-//! is a `const` table here.
+//! ages, in months). Out of scope, deliberately: catch-up rules,
+//! contraindications, and brand-specific series (e.g. RV1 vs RV5) — the
+//! forecast answers "what does the routine schedule say is due" and nothing
+//! more. No external/runtime calls: the schedule is a `const` table here.
 
 use time::{Date, OffsetDateTime};
 

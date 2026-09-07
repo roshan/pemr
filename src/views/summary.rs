@@ -23,8 +23,7 @@ pub fn page(nav: &Nav<'_>, subject: &Subject, sections: &[Markup]) -> Markup {
             span { "generated " (peds::today()) }
         }))
         div class="my-3 print:hidden" {
-            (c::alert_info("Use your browser's Print → Save as PDF to export this page. \
-                Generated from personal-emr; not a complete medical record."))
+            (c::alert_info("Use your browser's Print → Save as PDF to export this page."))
         }
         @for sec in sections { (sec) }
     };

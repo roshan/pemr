@@ -358,7 +358,7 @@ pub fn routes() -> Vec<ApiRoute> {
                 "GET",
                 "the canonical CDC \"Learn the Signs. Act Early.\" 2022 milestone catalogue \
                  (159 milestones, 12 checkpoints 2mo-5y, 4 domains) + the response vocabulary \
-                 and disclaimer. The ONLY accepted milestone vocabulary — never invent one",
+                 and age_basis. The ONLY accepted milestone vocabulary — never invent one",
             )],
         },
         ApiRoute {

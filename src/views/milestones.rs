@@ -205,7 +205,7 @@ fn row_controls(
 /// feature; rendered by `subject_modules::milestones`): a **foldable card**
 /// whose body is a **per-period completion** breakdown (every checkpoint 2mo–5y
 /// with a met/total meter, the current age flagged), plus the required
-/// disclaimer and a link to the full detail page. Management (enable/disable)
+/// and a link to the full detail page. Management (enable/disable)
 /// lives on the Edit Profile page, not here. The interactive checklist lives on
 /// the detail page. `per_period` is `(checkpoint_months, met, total)` for each
 /// checkpoint, in order.
@@ -259,8 +259,7 @@ pub fn summary_card(
 }
 
 /// The dedicated milestone detail page (`/subjects/{id}/milestones`): the full
-/// interactive checklist, the disclaimer, the passive Act Early disclosure, and
-/// links to the progress + printable-summary pages. `inner` is the checklist (or
+/// interactive checklist and links to the progress + printable-summary pages. `inner` is the checklist (or
 /// a "set DOB" notice).
 pub fn detail_page(
     nav: &Nav<'_>,

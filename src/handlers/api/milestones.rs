@@ -54,7 +54,7 @@ pub struct CatalogueQuery {
 /// `GET /api/v1/milestones` — the canonical CDC "Learn the Signs. Act Early."
 /// 2022 catalogue (159 milestones × 12 checkpoints × 4 domains), optionally
 /// narrowed by `?checkpoint=` / `?domain=`. Static: it comes from the vendored
-/// TSV, not the database. The vocabularies and the disclaimer ride along so a
+/// TSV, not the database. The vocabularies and `age_basis` ride along so a
 /// caller needs exactly one request to know what it may send.
 pub async fn catalogue(
     _ctx: ApiKeyContext,
