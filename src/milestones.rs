@@ -134,46 +134,15 @@ pub fn response_label(r: &str) -> &'static str {
     }
 }
 
-// ── CDC "Act Early" guidance (passive reference; NEVER an automatic alert) ─────
-// The 2022 revision replaced the old per-age "tell the doctor if…" lists with a
-// single general message. Vendored verbatim from the CDC LTSAE checklists.
-
-pub const ACT_EARLY_HEADING: &str = "Concerned about your child's development? Act early.";
-
-/// The CDC "Act Early" guidance paragraphs, shown as passive, opt-in reference
-/// content. This is education, not clinical decision support — no milestone
-/// response ever triggers these automatically.
-pub const ACT_EARLY_GUIDANCE: &[&str] = &[
-    "You know your child best. Don't wait. If your child is not meeting one or more \
-     milestones, has lost skills he or she once had, or you have other concerns, act \
-     early. Talk with your child's doctor, share your concerns, and ask about \
-     developmental screening.",
-    "If you or the doctor are still concerned, ask for a referral to a specialist who \
-     can evaluate your child more, and call your state or territory's early intervention \
-     program to find out if your child can get services to help. Learn more and find the \
-     number at cdc.gov/FindEI.",
-    "For more on how to help your child, visit cdc.gov/Concerned.",
-];
-
-/// What the milestone ages actually MEAN, in one line. The 2022 LTSAE revision
-/// moved from the 50th percentile ("the average age") to the **75th**: each item
-/// is a behaviour 75% or more of children show by that age (Zubler et al.,
-/// Pediatrics 2022;149(3):e2021052138). That threshold is the dataset's whole
-/// design, so it is stated wherever milestones are shown or exported rather than
-/// left implicit. Note there is deliberately **no 90th-percentile companion** —
-/// CDC publishes one threshold per milestone; per-item percentile bands are the
-/// structure of proprietary instruments (Denver II), not of LTSAE. Do not
+/// What the milestone ages mean. The 2022 LTSAE revision moved from the 50th
+/// percentile (the average age) to the **75th**: each item is a behaviour 75% or
+/// more of children show by that age (Zubler et al., Pediatrics
+/// 2022;149(3):e2021052138). There is no 90th-percentile companion — CDC
+/// publishes one threshold per milestone; per-item percentile bands are the
+/// structure of proprietary instruments (Denver II), not of LTSAE. Don't
 /// synthesise one.
-pub const PERCENTILE_BASIS: &str = "Each CDC milestone is a behaviour that 75% or more of \
-    children show by the listed age \u{2014} the 2022 revision moved these from the 50th to the \
-    75th percentile. An item not yet marked is therefore not, on its own, a delay.";
-
-/// The tracking-vs-screening disclaimer required in the UI and every export
-/// (see PEMR-35 constraints). Single source of truth.
-pub const DISCLAIMER: &str = "This is a tracking and reference tool based on CDC \
-    \u{201c}Learn the Signs. Act Early.\u{201d} milestones \u{2014} not a validated \
-    developmental screening instrument. It does not diagnose and is not a substitute \
-    for professional evaluation. Share any concerns with your child's doctor.";
+pub const PERCENTILE_BASIS: &str = "Each CDC milestone is a behaviour 75% or more of children \
+    show by the listed age (2022 revision; previously the 50th percentile).";
 
 #[cfg(test)]
 mod tests {

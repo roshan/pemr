@@ -5,11 +5,11 @@
 //! HTMX-swapped `feature_panel` (Enable/Disable per feature) lives on the
 //! subject's Edit Profile page. The "Act Early" guidance is passive (a closed
 //! disclosure), never an automatic alert. The required tracking-vs-screening
-//! disclaimer (`milestones::DISCLAIMER`) appears as a FOOTNOTE under the content
-//! it qualifies — never as preamble stacked above it; the printable summary,
-//! which travels without the surrounding UI, also carries the 75th-percentile
-//! basis. On screen that basis is a number in the checklist heading, not a
-//! paragraph.
+//! There are NO disclaimers or "talk to your doctor" blocks: this is personal
+//! software for one family, not a product handing information to a third party
+//! (owner decision, 2026-09-07). The 75th-percentile basis appears as a number
+//! in the checklist heading; the printable summary states it in words because
+//! an export travels without the surrounding UI.
 
 use std::collections::HashMap;
 
@@ -201,14 +201,6 @@ fn row_controls(
     }
 }
 
-fn act_early_body() -> Markup {
-    html! {
-        @for para in milestones::ACT_EARLY_GUIDANCE {
-            p class="text-sm text-ink mt-2" { (para) }
-        }
-    }
-}
-
 /// The milestone tracker's chart **content** card (gated by the "milestones"
 /// feature; rendered by `subject_modules::milestones`): a **foldable card**
 /// whose body is a **per-period completion** breakdown (every checkpoint 2mo–5y
@@ -259,7 +251,6 @@ pub fn summary_card(
             }
             None => (c::alert_info("Set this child\u{2019}s date of birth to use the milestone tracker.")),
         }
-        p class="text-xs text-muted mt-3" { (milestones::DISCLAIMER) }
         div class="mt-3" {
             (c::button_link_secondary(format!("/subjects/{sid}/milestones"), "Open milestones \u{2192}"))
         }
@@ -290,14 +281,6 @@ pub fn detail_page(
             (c::button_link_secondary(format!("/subjects/{sid}/milestones/summary"), "Printable summary"))
         }
         (inner)
-        // The non-screening disclaimer is required (CLAUDE.md), so it stays —
-        // but at the foot of the page, after the thing it qualifies, rather than
-        // as three paragraphs of preamble above the content. The 75%-basis line
-        // is gone from here: it lives in the checklist heading now, as a number.
-        div class="mt-8 pt-3 border-t border-line" {
-            (c::collapse_section(milestones::ACT_EARLY_HEADING, act_early_body(), false))
-            p class="text-xs text-muted mt-2" { (milestones::DISCLAIMER) }
-        }
     };
     shell(nav, body)
 }
@@ -461,10 +444,6 @@ pub fn progress_page(
                 }))
             }
         }
-
-        div class="mt-8 pt-3 border-t border-line" {
-            p class="text-xs text-muted" { (milestones::DISCLAIMER) }
-        }
     };
     shell(nav, body)
 }
@@ -493,7 +472,6 @@ pub fn summary_page(
             span class="mx-2 text-muted/60" { "·" }
             span { "generated " (peds::today()) }
         }))
-        div class="my-3" { (c::alert_info(milestones::DISCLAIMER)) }
         p class="text-xs text-muted mb-3" { (milestones::PERCENTILE_BASIS) }
         div class="my-3 print:hidden" {
             (c::alert_info("Use your browser\u{2019}s Print \u{2192} Save as PDF to export or attach this summary."))

@@ -18,6 +18,9 @@
 //!   toggle, not a silent write into a chart nobody can see. Reads are the
 //!   opposite: they return `feature_enabled: false` with an empty list, because
 //!   "not enabled" is a fact about the subject, not an error.
+//!
+//! No disclaimer strings ship in these payloads (owner decision 2026-09-07);
+//! `age_basis` is a statement of what the CDC ages mean, which is data.
 
 use axum::extract::State;
 use axum::response::Json;
@@ -93,7 +96,6 @@ pub async fn catalogue(
             .collect::<Vec<_>>(),
         "responses": milestones::RESPONSES,
         "age_basis": milestones::PERCENTILE_BASIS,
-        "disclaimer": milestones::DISCLAIMER,
     })))
 }
 
@@ -145,7 +147,6 @@ pub async fn subject_milestones(
         "feature_enabled": enabled,
         "tracker": tracker_json(&s),
         "responses": responses,
-        "disclaimer": milestones::DISCLAIMER,
     })))
 }
 
