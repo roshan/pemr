@@ -5,7 +5,8 @@
 //! HTMX-swapped `feature_panel` (Enable/Disable per feature) lives on the
 //! subject's Edit Profile page. The "Act Early" guidance is passive (a closed
 //! disclosure), never an automatic alert. The required tracking-vs-screening
-//! disclaimer (`milestones::DISCLAIMER`) is shown in the module and on both the
+//! disclaimer (`milestones::DISCLAIMER`) plus the 75th-percentile basis
+//! (`milestones::PERCENTILE_BASIS`) are shown in the module and on both the
 //! progress + printable-summary pages.
 
 use std::collections::HashMap;
@@ -258,7 +259,8 @@ pub fn summary_card(
             }
             None => (c::alert_info("Set this child\u{2019}s date of birth to use the milestone tracker.")),
         }
-        p class="text-xs text-muted mt-3" { (milestones::DISCLAIMER) }
+        p class="text-xs text-muted mt-3" { (milestones::PERCENTILE_BASIS) }
+        p class="text-xs text-muted mt-2" { (milestones::DISCLAIMER) }
         div class="mt-3" {
             (c::button_link_secondary(format!("/subjects/{sid}/milestones"), "Open milestones \u{2192}"))
         }
@@ -285,6 +287,7 @@ pub fn detail_page(
             @if let Some(t) = tracker { (c::badge_neutral(t.basis.label())) }
         }
         div class="mb-2" { (c::alert_info(milestones::DISCLAIMER)) }
+        p class="text-xs text-muted mb-2" { (milestones::PERCENTILE_BASIS) }
         div class="mb-2" {
             (c::collapse_section(milestones::ACT_EARLY_HEADING, act_early_body(), false))
         }
@@ -395,6 +398,7 @@ pub fn progress_page(
         (c::page_title(format!("{} — milestone progress", subject.full_name)))
         (c::button_link_secondary(format!("/subjects/{}", subject.id), "← Back to chart"))
         div class="my-3" { (c::alert_info(milestones::DISCLAIMER)) }
+        p class="text-xs text-muted mb-3" { (milestones::PERCENTILE_BASIS) }
         @if let Some(t) = tracker {
             p class="text-sm text-muted mb-3" {
                 "Tracking age: " span class="text-ink" { (milestone_age::fmt_months(t.computed_months)) }
@@ -485,6 +489,7 @@ pub fn summary_page(
             span { "generated " (peds::today()) }
         }))
         div class="my-3" { (c::alert_info(milestones::DISCLAIMER)) }
+        p class="text-xs text-muted mb-3" { (milestones::PERCENTILE_BASIS) }
         div class="my-3 print:hidden" {
             (c::alert_info("Use your browser\u{2019}s Print \u{2192} Save as PDF to export or attach this summary."))
         }

@@ -92,6 +92,7 @@ pub async fn catalogue(
             .map(|(key, label)| json!({"key": key, "label": label}))
             .collect::<Vec<_>>(),
         "responses": milestones::RESPONSES,
+        "age_basis": milestones::PERCENTILE_BASIS,
         "disclaimer": milestones::DISCLAIMER,
     })))
 }
