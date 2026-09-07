@@ -5,9 +5,11 @@
 //! HTMX-swapped `feature_panel` (Enable/Disable per feature) lives on the
 //! subject's Edit Profile page. The "Act Early" guidance is passive (a closed
 //! disclosure), never an automatic alert. The required tracking-vs-screening
-//! disclaimer (`milestones::DISCLAIMER`) plus the 75th-percentile basis
-//! (`milestones::PERCENTILE_BASIS`) are shown in the module and on both the
-//! progress + printable-summary pages.
+//! disclaimer (`milestones::DISCLAIMER`) appears as a FOOTNOTE under the content
+//! it qualifies — never as preamble stacked above it; the printable summary,
+//! which travels without the surrounding UI, also carries the 75th-percentile
+//! basis. On screen that basis is a number in the checklist heading, not a
+//! paragraph.
 
 use std::collections::HashMap;
 
@@ -56,9 +58,11 @@ pub fn checklist(
                     prev.is_some(),
                 ))
                 div class="text-center" {
-                    div class="text-sm font-semibold text-ink" { "Milestones by " (checkpoint) " months" }
+                    div class="text-sm font-semibold text-ink" {
+                        "Milestones 75% of children show by " (milestone_age::fmt_months(checkpoint))
+                    }
                     div class="text-xs text-muted" {
-                        (milestone_age::fmt_months(checkpoint))
+                        "75th-percentile age (CDC LTSAE 2022)"
                         @if computed == Some(checkpoint) { " · current age" }
                     }
                 }
@@ -135,7 +139,7 @@ fn band_view(
                                     &checklist_url(subject_id, cp),
                                     target,
                                     &format!(
-                                        "{dlabel} \u{00b7} {} \u{00b7} {met}/{} marked yes",
+                                        "{dlabel} \u{00b7} 75% of children by {} \u{00b7} {met}/{} marked yes",
                                         milestone_age::fmt_months(cp),
                                         items.len(),
                                     ),
@@ -151,7 +155,7 @@ fn band_view(
                     }
                     div class="mt-2 flex flex-wrap items-center justify-between gap-2" {
                         (c::milestone_band_legend())
-                        (c::muted("Each square is one CDC milestone \u{2014} pick a band to open its checklist."))
+                        (c::muted("Each square is one CDC milestone; a column is the age 75% of children reach those \u{2014} pick a band to open its checklist."))
                     }
                 },
             ))
@@ -199,10 +203,6 @@ fn row_controls(
 
 fn act_early_body() -> Markup {
     html! {
-        p class="text-sm text-muted" {
-            "Reference guidance from the CDC. This is informational only — nothing here is \
-             triggered automatically by your answers."
-        }
         @for para in milestones::ACT_EARLY_GUIDANCE {
             p class="text-sm text-ink mt-2" { (para) }
         }
@@ -259,8 +259,7 @@ pub fn summary_card(
             }
             None => (c::alert_info("Set this child\u{2019}s date of birth to use the milestone tracker.")),
         }
-        p class="text-xs text-muted mt-3" { (milestones::PERCENTILE_BASIS) }
-        p class="text-xs text-muted mt-2" { (milestones::DISCLAIMER) }
+        p class="text-xs text-muted mt-3" { (milestones::DISCLAIMER) }
         div class="mt-3" {
             (c::button_link_secondary(format!("/subjects/{sid}/milestones"), "Open milestones \u{2192}"))
         }
@@ -286,16 +285,19 @@ pub fn detail_page(
             (c::muted("CDC \u{201c}Learn the Signs. Act Early.\u{201d}"))
             @if let Some(t) = tracker { (c::badge_neutral(t.basis.label())) }
         }
-        div class="mb-2" { (c::alert_info(milestones::DISCLAIMER)) }
-        p class="text-xs text-muted mb-2" { (milestones::PERCENTILE_BASIS) }
-        div class="mb-2" {
-            (c::collapse_section(milestones::ACT_EARLY_HEADING, act_early_body(), false))
-        }
         div class="flex flex-wrap gap-2 mb-4" {
             (c::button_link_secondary(format!("/subjects/{sid}/milestones/progress"), "Progress view"))
             (c::button_link_secondary(format!("/subjects/{sid}/milestones/summary"), "Printable summary"))
         }
         (inner)
+        // The non-screening disclaimer is required (CLAUDE.md), so it stays —
+        // but at the foot of the page, after the thing it qualifies, rather than
+        // as three paragraphs of preamble above the content. The 75%-basis line
+        // is gone from here: it lives in the checklist heading now, as a number.
+        div class="mt-8 pt-3 border-t border-line" {
+            (c::collapse_section(milestones::ACT_EARLY_HEADING, act_early_body(), false))
+            p class="text-xs text-muted mt-2" { (milestones::DISCLAIMER) }
+        }
     };
     shell(nav, body)
 }
@@ -397,8 +399,7 @@ pub fn progress_page(
     let body = html! {
         (c::page_title(format!("{} — milestone progress", subject.full_name)))
         (c::button_link_secondary(format!("/subjects/{}", subject.id), "← Back to chart"))
-        div class="my-3" { (c::alert_info(milestones::DISCLAIMER)) }
-        p class="text-xs text-muted mb-3" { (milestones::PERCENTILE_BASIS) }
+
         @if let Some(t) = tracker {
             p class="text-sm text-muted mb-3" {
                 "Tracking age: " span class="text-ink" { (milestone_age::fmt_months(t.computed_months)) }
@@ -459,6 +460,10 @@ pub fn progress_page(
                     }
                 }))
             }
+        }
+
+        div class="mt-8 pt-3 border-t border-line" {
+            p class="text-xs text-muted" { (milestones::DISCLAIMER) }
         }
     };
     shell(nav, body)
